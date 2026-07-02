@@ -29,6 +29,7 @@ import com.server.handler.message.DeleteMessageHandler;
 import com.server.handler.message.EditMessageHandler;
 import com.server.handler.message.GetConversationsHandler;
 import com.server.handler.message.GetMessagesHandler;
+import com.server.handler.message.GroupManagementHandler;
 import com.server.handler.message.LeaveGroupHandler;
 import com.server.handler.message.PinMessageHandler;
 import com.server.handler.message.SearchMessagesHandler;
@@ -68,6 +69,7 @@ public class Router {
     private static PinMessageHandler pinMessageHandler = new PinMessageHandler();
     private static UnpinMessageHandler unpinMessageHandler = new UnpinMessageHandler();
     private static SetPinPolicyHandler setPinPolicyHandler = new SetPinPolicyHandler();
+    private static GroupManagementHandler groupManagementHandler = new GroupManagementHandler();
 
     // ---- friendship handlers (require FriendshipService) ----
     private static FriendshipService friendshipService = new FriendshipService();
@@ -207,6 +209,9 @@ public class Router {
                     break;
                 case "SET_PIN_POLICY":
                     response = setPinPolicyHandler.handleTcp(request, conn);
+                    break;
+                case "MANAGE_GROUP":
+                    response = groupManagementHandler.handleTcp(request, conn);
                     break;
 
                 // ---- friendship actions ----

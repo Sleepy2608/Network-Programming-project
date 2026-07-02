@@ -26,7 +26,10 @@ echo.
 echo [2/2] Launching JavaFX Client...
 echo ===================================================
 echo.
-echo [Mode] Connect to localhost:3000 (default)
+if not defined TCP_HOST set "TCP_HOST=127.0.0.1"
+if not defined TCP_PORT set "TCP_PORT=8080"
+
+echo [Mode] Connect to %TCP_HOST%:%TCP_PORT% (default)
 echo        Set TCP_HOST / TCP_PORT env vars to override.
 echo.
 call mvn javafx:run

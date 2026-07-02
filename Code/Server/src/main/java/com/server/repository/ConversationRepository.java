@@ -456,4 +456,192 @@ public class ConversationRepository {
             pstmt.executeUpdate();
         }
     }
+
+    // ==================== GROUP MANAGEMENT ====================
+
+    public String getMemberRole(long conversationId, long userId) {
+        String query = "SELECT role FROM conversation_members WHERE conversation_id = ? AND user_id = ?";
+        try (Connection conn = Database.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(query)) {
+            pstmt.setLong(1, conversationId);
+            pstmt.setLong(2, userId);
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getString("role");
+                }
+            }
+        } catch (SQLException e) {
+            logger.error("Error fetching member role for conversationId={} userId={}", conversationId, userId, e);
+        }
+        return null;
+    }
+
+    public JsonArray getMembersWithDetails(long conversationId) {
+        JsonArray members = new JsonArray();
+        String query = "SELECT cm.user_id, u.username, cm.role, u.is_online " +
+                "FROM conversation_members cm " +
+                "JOIN users u ON cm.user_id = u.id " +
+                "WHERE cm.conversation_id = ? " +
+                "ORDER BY FIELD(cm.role, 'ADMIN', 'MEMBER'), u.username";
+        try (Connection conn = Database.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(query)) {
+            pstmt.setLong(1, conversationId);
+            try (ResultSet rs = pstmt.executeQuery()) {
+                while (rs.next()) {
+                    JsonObject member = new JsonObject();
+                    member.addProperty("userId", rs.getLong("user_id"));
+                    member.addProperty("username", rs.getString("username"));
+                    member.addProperty("role", rs.getString("role"));
+                    member.addProperty("isOnline", rs.getBoolean("is_online"));
+                    members.add(member);
+                }
+            }
+        } catch (SQLException e) {
+            logger.error("Error fetching members with details for conversationId={}", conversationId, e);
+        }
+        return members;
+    }
+
+    public void updateGroupName(long conversationId, String newName) throws SQLException {
+        String query = "UPDATE conversations SET name = ? WHERE id = ? AND type = 'GROUP'";
+        try (Connection conn = Database.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(query)) {
+            pstmt.setString(1, newName);
+            pstmt.setLong(2, conversationId);
+            int rows = pstmt.executeUpdate();
+            if (rows == 0) {
+                throw new SQLException("Group conversation not found or not a group: " + conversationId);
+            }
+        }
+    }
+
+    public void addMemberWithRole(long conversationId, long userId, String role) throws SQLException {
+        String query = "INSERT INTO conversation_members (conversation_id, user_id, role) VALUES (?, ?, ?)";
+        try (Connection conn = Database.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(query)) {
+            pstmt.setLong(1, conversationId);
+            pstmt.setLong(2, userId);
+            pstmt.setString(3, role);
+            pstmt.executeUpdate();
+        }
+    }
+
+    public boolean isGroupMember(long conversationId, long userId) {
+        String query = "SELECT 1 FROM conversation_members WHERE conversation_id = ? AND user_id = ?";
+        try (Connection conn = Database.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(query)) {
+            pstmt.setLong(1, conversationId);
+            pstmt.setLong(2, userId);
+            try (ResultSet rs = pstmt.executeQuery()) {
+                return rs.next();
+            }
+        } catch (SQLException e) {
+            logger.error("Error checking membership for conversationId={} userId={}", conversationId, userId, e);
+        }
+        return false;
+    }
+
+    public void transferAdmin(long conversationId, long currentAdminId, long newAdminId) throws SQLException {
+        String updateOld = "UPDATE conversation_members SET role = 'MEMBER' WHERE conversation_id = ? AND user_id = ?";
+        String updateNew = "UPDATE conversation_members SET role = 'ADMIN' WHERE conversation_id = ? AND user_id = ?";
+        String updateCreatedBy = "UPDATE conversations SET created_by = ? WHERE id = ?";
+
+        try (Connection conn = Database.getConnection()) {
+            conn.setAutoCommit(false);
+            try {
+                try (PreparedStatement stmt = conn.prepareStatement(updateOld)) {
+                    stmt.setLong(1, conversationId);
+                    stmt.setLong(2, currentAdminId);
+                    stmt.executeUpdate();
+                }
+                try (PreparedStatement stmt = conn.prepareStatement(updateNew)) {
+                    stmt.setLong(1, conversationId);
+                    stmt.setLong(2, newAdminId);
+                    stmt.executeUpdate();
+                }
+                try (PreparedStatement stmt = conn.prepareStatement(updateCreatedBy)) {
+                    stmt.setLong(1, newAdminId);
+                    stmt.setLong(2, conversationId);
+                    stmt.executeUpdate();
+                }
+                conn.commit();
+            } catch (SQLException e) {
+                conn.rollback();
+                throw e;
+            } finally {
+                conn.setAutoCommit(true);
+            }
+        }
+    }
+
+    public void disbandGroup(long conversationId) throws SQLException {
+        String deleteMembers = "DELETE FROM conversation_members WHERE conversation_id = ?";
+        String deleteMessageStatus = "DELETE FROM message_status WHERE message_id IN (SELECT id FROM messages WHERE conversation_id = ?)";
+        String deleteMessages = "DELETE FROM messages WHERE conversation_id = ?";
+        String deleteConversation = "DELETE FROM conversations WHERE id = ? AND type = 'GROUP'";
+
+        try (Connection conn = Database.getConnection()) {
+            conn.setAutoCommit(false);
+            try {
+                try (PreparedStatement stmt = conn.prepareStatement(deleteMembers)) {
+                    stmt.setLong(1, conversationId);
+                    stmt.executeUpdate();
+                }
+                try (PreparedStatement stmt = conn.prepareStatement(deleteMessageStatus)) {
+                    stmt.setLong(1, conversationId);
+                    stmt.executeUpdate();
+                }
+                try (PreparedStatement stmt = conn.prepareStatement(deleteMessages)) {
+                    stmt.setLong(1, conversationId);
+                    stmt.executeUpdate();
+                }
+                try (PreparedStatement stmt = conn.prepareStatement(deleteConversation)) {
+                    stmt.setLong(1, conversationId);
+                    int rows = stmt.executeUpdate();
+                    if (rows == 0) {
+                        throw new SQLException("Group conversation not found: " + conversationId);
+                    }
+                }
+                conn.commit();
+            } catch (SQLException e) {
+                conn.rollback();
+                throw e;
+            } finally {
+                conn.setAutoCommit(true);
+            }
+        }
+    }
+
+    public Long getConversationCreator(long conversationId) {
+        String query = "SELECT created_by FROM conversations WHERE id = ?";
+        try (Connection conn = Database.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(query)) {
+            pstmt.setLong(1, conversationId);
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    long createdBy = rs.getLong("created_by");
+                    return rs.wasNull() ? null : createdBy;
+                }
+            }
+        } catch (SQLException e) {
+            logger.error("Error fetching creator for conversationId={}", conversationId, e);
+        }
+        return null;
+    }
+
+    public String getConversationName(long conversationId) {
+        String query = "SELECT name FROM conversations WHERE id = ?";
+        try (Connection conn = Database.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(query)) {
+            pstmt.setLong(1, conversationId);
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getString("name");
+                }
+            }
+        } catch (SQLException e) {
+            logger.error("Error fetching name for conversationId={}", conversationId, e);
+        }
+        return null;
+    }
 }
