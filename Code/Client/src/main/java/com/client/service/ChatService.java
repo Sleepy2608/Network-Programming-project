@@ -666,6 +666,60 @@ public class ChatService {
         return sendRequestSync(req);
     }
 
+    // ---- group management ----
+
+    public ApiResponse getGroupMembers(long conversationId) {
+        JsonObject req = new JsonObject();
+        req.addProperty("action", "MANAGE_GROUP");
+        req.addProperty("conversationId", conversationId);
+        req.addProperty("subAction", "GET_MEMBERS");
+        return sendRequestSync(req);
+    }
+
+    public ApiResponse renameGroup(long conversationId, String newName) {
+        JsonObject req = new JsonObject();
+        req.addProperty("action", "MANAGE_GROUP");
+        req.addProperty("conversationId", conversationId);
+        req.addProperty("subAction", "RENAME");
+        req.addProperty("newName", newName);
+        return sendRequestSync(req);
+    }
+
+    public ApiResponse addGroupMember(long conversationId, long targetUserId) {
+        JsonObject req = new JsonObject();
+        req.addProperty("action", "MANAGE_GROUP");
+        req.addProperty("conversationId", conversationId);
+        req.addProperty("subAction", "ADD_MEMBER");
+        req.addProperty("targetUserId", targetUserId);
+        return sendRequestSync(req);
+    }
+
+    public ApiResponse kickGroupMember(long conversationId, long targetUserId) {
+        JsonObject req = new JsonObject();
+        req.addProperty("action", "MANAGE_GROUP");
+        req.addProperty("conversationId", conversationId);
+        req.addProperty("subAction", "KICK_MEMBER");
+        req.addProperty("targetUserId", targetUserId);
+        return sendRequestSync(req);
+    }
+
+    public ApiResponse transferGroupAdmin(long conversationId, long targetUserId) {
+        JsonObject req = new JsonObject();
+        req.addProperty("action", "MANAGE_GROUP");
+        req.addProperty("conversationId", conversationId);
+        req.addProperty("subAction", "TRANSFER_ADMIN");
+        req.addProperty("targetUserId", targetUserId);
+        return sendRequestSync(req);
+    }
+
+    public ApiResponse disbandGroup(long conversationId) {
+        JsonObject req = new JsonObject();
+        req.addProperty("action", "MANAGE_GROUP");
+        req.addProperty("conversationId", conversationId);
+        req.addProperty("subAction", "DISBAND");
+        return sendRequestSync(req);
+    }
+
     public ApiResponse editMessage(long messageId, long conversationId, String content) {
         JsonObject req = new JsonObject();
         req.addProperty("action", "EDIT_MESSAGE");
