@@ -1,14 +1,15 @@
 package com.server.handler.message;
 
+import java.util.List;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.server.service.ConversationService;
 import com.server.tcp.ClientConnection;
 import com.server.tcp.TcpConnectionManager;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import java.util.List;
 
 /**
  * TCP handler for group management operations.
@@ -115,7 +116,6 @@ public class GroupManagementHandler {
 
     // ---- RENAME ----
     private JsonObject handleRename(JsonObject request, long conversationId, long connUserId, JsonObject response) throws Exception {
-        // Any member can rename the group
         if (!conversationService.isGroupMember(conversationId, connUserId)) {
             response.addProperty("status", "error");
             response.addProperty("message", "You are not a member of this group");
@@ -147,7 +147,6 @@ public class GroupManagementHandler {
         response.addProperty("conversationId", conversationId);
         response.addProperty("newName", newName);
 
-        // Broadcast to all group members
         broadcastToGroup(conversationId, "GROUP_RENAMED", json -> {
             json.addProperty("conversationId", conversationId);
             json.addProperty("newName", newName);
@@ -159,7 +158,6 @@ public class GroupManagementHandler {
 
     // ---- ADD_MEMBER ----
     private JsonObject handleAddMember(JsonObject request, long conversationId, long connUserId, JsonObject response) throws Exception {
-        // Any member can add new members
         if (!conversationService.isGroupMember(conversationId, connUserId)) {
             response.addProperty("status", "error");
             response.addProperty("message", "You are not a member of this group");
@@ -174,7 +172,6 @@ public class GroupManagementHandler {
 
         long targetUserId = request.get("targetUserId").getAsLong();
 
-        // Check if already a member
         if (conversationService.isGroupMember(conversationId, targetUserId)) {
             response.addProperty("status", "error");
             response.addProperty("message", "User is already a member of this group");
@@ -188,7 +185,6 @@ public class GroupManagementHandler {
         response.addProperty("conversationId", conversationId);
         response.addProperty("addedUserId", targetUserId);
 
-        // Broadcast to all group members (including the newly added one)
         broadcastToGroup(conversationId, "MEMBER_ADDED", json -> {
             json.addProperty("conversationId", conversationId);
             json.addProperty("addedUserId", targetUserId);
@@ -200,7 +196,6 @@ public class GroupManagementHandler {
 
     // ---- KICK_MEMBER ----
     private JsonObject handleKickMember(JsonObject request, long conversationId, long connUserId, JsonObject response) throws Exception {
-        // Only the original creator can kick members
         long creatorId = conversationService.getConversationCreator(conversationId);
         if (connUserId != creatorId) {
             response.addProperty("status", "error");
@@ -216,21 +211,18 @@ public class GroupManagementHandler {
 
         long targetUserId = request.get("targetUserId").getAsLong();
 
-        // Cannot kick yourself
         if (targetUserId == connUserId) {
             response.addProperty("status", "error");
             response.addProperty("message", "Cannot kick yourself. Use Leave Group instead.");
             return response;
         }
 
-        // Verify target is a member
         if (!conversationService.isGroupMember(conversationId, targetUserId)) {
             response.addProperty("status", "error");
             response.addProperty("message", "User is not a member of this group");
             return response;
         }
 
-        // Get member list before kicking (to broadcast to all including the kicked user)
         List<Long> memberIds = conversationService.getMemberIds(conversationId);
 
         conversationService.kickGroupMember(conversationId, targetUserId);
@@ -240,7 +232,6 @@ public class GroupManagementHandler {
         response.addProperty("conversationId", conversationId);
         response.addProperty("kickedUserId", targetUserId);
 
-        // Broadcast to all members (including the kicked user so they can react)
         JsonObject broadcastMsg = new JsonObject();
         broadcastMsg.addProperty("action", "MEMBER_KICKED");
         broadcastMsg.addProperty("conversationId", conversationId);
@@ -256,7 +247,6 @@ public class GroupManagementHandler {
 
     // ---- TRANSFER_ADMIN ----
     private JsonObject handleTransferAdmin(JsonObject request, long conversationId, long connUserId, JsonObject response) throws Exception {
-        // Only the original creator can transfer admin rights
         long creatorId = conversationService.getConversationCreator(conversationId);
         if (connUserId != creatorId) {
             response.addProperty("status", "error");
@@ -278,7 +268,6 @@ public class GroupManagementHandler {
             return response;
         }
 
-        // Verify target is a member
         if (!conversationService.isGroupMember(conversationId, targetUserId)) {
             response.addProperty("status", "error");
             response.addProperty("message", "Target user is not a member of this group");
@@ -293,7 +282,6 @@ public class GroupManagementHandler {
         response.addProperty("newAdminId", targetUserId);
         response.addProperty("oldAdminId", connUserId);
 
-        // Broadcast to all group members
         broadcastToGroup(conversationId, "ADMIN_TRANSFERRED", json -> {
             json.addProperty("conversationId", conversationId);
             json.addProperty("newAdminId", targetUserId);
@@ -305,7 +293,6 @@ public class GroupManagementHandler {
 
     // ---- DISBAND ----
     private JsonObject handleDisband(long conversationId, long connUserId, JsonObject response) throws Exception {
-        // Only the original creator can disband the group
         long creatorId = conversationService.getConversationCreator(conversationId);
         if (connUserId != creatorId) {
             response.addProperty("status", "error");
@@ -313,7 +300,6 @@ public class GroupManagementHandler {
             return response;
         }
 
-        // Get member list before disbanding (to broadcast)
         List<Long> memberIds = conversationService.getMemberIds(conversationId);
         String groupName = conversationService.getConversationName(conversationId);
 
@@ -323,7 +309,6 @@ public class GroupManagementHandler {
         response.addProperty("status", "success");
         response.addProperty("conversationId", conversationId);
 
-        // Broadcast to all former members
         JsonObject broadcastMsg = new JsonObject();
         broadcastMsg.addProperty("action", "GROUP_DISBANDED");
         broadcastMsg.addProperty("conversationId", conversationId);
