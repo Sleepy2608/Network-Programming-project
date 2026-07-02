@@ -173,9 +173,21 @@ public class ConversationRepository {
                 "u.last_seen AS last_seen, " +
                 "(SELECT COALESCE(NULLIF(m.content, ''), fm.content, m.content) FROM messages m " +
                 "LEFT JOIN messages fm ON m.forward_from_id = fm.id " +
-                "WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1) as last_message, " +
+                "WHERE m.conversation_id = c.id AND m.is_deleted = 0 " +
+                "AND m.id NOT IN (SELECT edited_to_id FROM messages WHERE edited_to_id IS NOT NULL) " +
+                "ORDER BY m.created_at DESC LIMIT 1) as last_message, " +
+                "(SELECT m.type FROM messages m " +
+                "WHERE m.conversation_id = c.id AND m.is_deleted = 0 " +
+                "AND m.id NOT IN (SELECT edited_to_id FROM messages WHERE edited_to_id IS NOT NULL) " +
+                "ORDER BY m.created_at DESC LIMIT 1) as last_message_type, " +
                 "(SELECT m.sender_id FROM messages m " +
-                "WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1) as last_message_sender_id, " +
+                "WHERE m.conversation_id = c.id AND m.is_deleted = 0 " +
+                "AND m.id NOT IN (SELECT edited_to_id FROM messages WHERE edited_to_id IS NOT NULL) " +
+                "ORDER BY m.created_at DESC LIMIT 1) as last_message_sender_id, " +
+                "(SELECT u2.username FROM messages m JOIN users u2 ON m.sender_id = u2.id " +
+                "WHERE m.conversation_id = c.id AND m.is_deleted = 0 " +
+                "AND m.id NOT IN (SELECT edited_to_id FROM messages WHERE edited_to_id IS NOT NULL) " +
+                "ORDER BY m.created_at DESC LIMIT 1) as last_message_sender_name, " +
                 "c.last_message_at " +
                 "FROM conversations c " +
                 "JOIN conversation_members cm ON c.id = cm.conversation_id " +
@@ -229,10 +241,16 @@ public class ConversationRepository {
                     String lastMessage = rs.getString("last_message");
                     obj.addProperty("lastMessage", lastMessage != null ? lastMessage : "");
 
+                    String lastMessageType = rs.getString("last_message_type");
+                    obj.addProperty("lastMessageType", lastMessageType != null ? lastMessageType : "TEXT");
+
                     long senderId = rs.getLong("last_message_sender_id");
                     if (!rs.wasNull()) {
                         obj.addProperty("lastMessageSenderId", senderId);
                     }
+
+                    String senderName = rs.getString("last_message_sender_name");
+                    obj.addProperty("lastMessageSenderName", senderName != null ? senderName : "");
 
                     Timestamp ts = rs.getTimestamp("last_message_at");
                     if (ts != null)
