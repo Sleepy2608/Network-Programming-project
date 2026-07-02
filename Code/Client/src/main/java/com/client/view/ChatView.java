@@ -120,6 +120,7 @@ public class ChatView {
     private final Map<Long, Boolean> peerOnlineByPeerId = new HashMap<>();
     private final Map<Long, Node> messageBubbleById = new HashMap<>();
     private final Map<Long, String> messageContentById = new HashMap<>();
+    private final Map<Long, String> messageTypeById = new HashMap<>();
     private final Map<Long, Integer> unreadCounts = new HashMap<>();
     private final Map<Long, String> conversationDisplayNames = new HashMap<>();
     private final Map<Long, String> conversationUserRoles = new HashMap<>();
@@ -305,6 +306,7 @@ public class ChatView {
                     currentConversationId = -1;
                     messagesBox.getChildren().clear();
                     messageContentById.clear();
+                    messageTypeById.clear();
                     messagePinnedState.clear();
                     if (pinnedMessagesBar != null) { pinnedMessagesBar.setVisible(false); pinnedMessagesBar.setManaged(false); }
                     if (headerChatName != null) headerChatName.setText("Chọn người để chat");
@@ -574,6 +576,7 @@ public class ChatView {
         messagesBox.getChildren().clear();
         messageBubbleById.clear();
         messageContentById.clear();
+        messageTypeById.clear();
         messagePinnedState.clear();
         if (pinnedMessagesBar != null) { pinnedMessagesBar.setVisible(false); pinnedMessagesBar.setManaged(false); }
         messageSeenContainers.clear();
@@ -926,6 +929,7 @@ public class ChatView {
             if (messageId > 0) {
                 messageSeenContainers.put(messageId, seenContainer);
                 messageContentById.put(messageId, content);
+                messageTypeById.put(messageId, type);
             }
 
             HBox wrapper;
@@ -1071,6 +1075,7 @@ public class ChatView {
 
         if (messageId > 0) {
             messageContentById.put(messageId, text);
+            messageTypeById.put(messageId, type);
         }
 
         if (senderId == currentUserId) {
@@ -1798,8 +1803,9 @@ public class ChatView {
             Node bubble = messageBubbleById.get(msgId);
             if (bubble == null) continue;
 
-            // Get raw content from stored map for proper emoji rendering
+            // Get raw content and type from stored maps
             String rawContent = messageContentById.getOrDefault(msgId, "");
+            String msgType = messageTypeById.getOrDefault(msgId, "TEXT");
 
             HBox item = new HBox(12);
             item.setAlignment(Pos.CENTER_LEFT);
@@ -1808,7 +1814,39 @@ public class ChatView {
             item.setOnMouseEntered(e -> item.setStyle("-fx-background-color: #2a2a5e; -fx-background-radius: 8px; -fx-cursor: hand;"));
             item.setOnMouseExited(e -> item.setStyle("-fx-background-color: #16213e; -fx-background-radius: 8px; -fx-cursor: hand;"));
 
-            Node contentNode = EmojiManager.getInstance().renderMessagePreview(rawContent);
+            Node contentNode;
+            if ("IMAGE".equalsIgnoreCase(msgType) && !rawContent.isEmpty()) {
+                // Decode base64 image and show thumbnail
+                try {
+                    String base64Data = rawContent;
+                    if (rawContent.contains(",")) {
+                        base64Data = rawContent.substring(rawContent.indexOf(",") + 1);
+                    }
+                    byte[] imageBytes = Base64.getDecoder().decode(base64Data.trim());
+                    Image img = new Image(new ByteArrayInputStream(imageBytes));
+                    ImageView thumbView = new ImageView(img);
+                    thumbView.setPreserveRatio(true);
+                    thumbView.setFitWidth(80);
+                    thumbView.setFitHeight(80);
+                    javafx.scene.shape.Rectangle clip = new javafx.scene.shape.Rectangle(80, 80);
+                    clip.setArcWidth(10);
+                    clip.setArcHeight(10);
+                    thumbView.setClip(clip);
+                    
+                    HBox imageContainer = new HBox(8);
+                    imageContainer.setAlignment(Pos.CENTER_LEFT);
+                    Label imgLabel = new Label("\uD83D\uDDBC [Hình ảnh]");
+                    imgLabel.setStyle("-fx-text-fill: #aaaaaa; -fx-font-size: 13px;");
+                    imageContainer.getChildren().addAll(thumbView, imgLabel);
+                    contentNode = imageContainer;
+                } catch (Exception e) {
+                    Label errLabel = new Label("\uD83D\uDDBC [Hình ảnh]");
+                    errLabel.setStyle("-fx-text-fill: #888888; -fx-font-size: 13px;");
+                    contentNode = errLabel;
+                }
+            } else {
+                contentNode = EmojiManager.getInstance().renderMessagePreview(rawContent);
+            }
             HBox.setHgrow(contentNode, Priority.ALWAYS);
 
             item.getChildren().add(contentNode);
@@ -2785,6 +2823,7 @@ public class ChatView {
                     currentConversationId = -1;
                     messagesBox.getChildren().clear();
                     messageContentById.clear();
+                    messageTypeById.clear();
                     messagePinnedState.clear();
                     if (pinnedMessagesBar != null) { pinnedMessagesBar.setVisible(false); pinnedMessagesBar.setManaged(false); }
                     if (headerChatName != null) headerChatName.setText("Chọn người để chat");
