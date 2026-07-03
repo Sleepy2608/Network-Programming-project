@@ -20,6 +20,10 @@ public class Message {
     private Long forwardFromId;
     private String forwardFromUsername;
     private String forwardFromContent;
+    private boolean pinned;
+    private Long pinnedBy;
+    private boolean deleted;
+    private Long editedToId;
 
     public Message() {}
 
@@ -74,6 +78,18 @@ public class Message {
 
     public String getForwardFromContent() { return forwardFromContent; }
     public void setForwardFromContent(String forwardFromContent) { this.forwardFromContent = forwardFromContent; }
+
+    public boolean isPinned() { return pinned; }
+    public void setPinned(boolean pinned) { this.pinned = pinned; }
+
+    public Long getPinnedBy() { return pinnedBy; }
+    public void setPinnedBy(Long pinnedBy) { this.pinnedBy = pinnedBy; }
+
+    public boolean isDeleted() { return deleted; }
+    public void setDeleted(boolean deleted) { this.deleted = deleted; }
+
+    public Long getEditedToId() { return editedToId; }
+    public void setEditedToId(Long editedToId) { this.editedToId = editedToId; }
 
     public static class SeenUserInfo {
         private long userId;

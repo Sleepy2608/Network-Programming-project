@@ -1,5 +1,21 @@
 package com.client.view;
 
+import java.io.ByteArrayInputStream;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+
 import com.client.controller.ChatController;
 import com.client.emoji.EmojiDef;
 import com.client.emoji.EmojiManager;
@@ -7,17 +23,36 @@ import com.client.service.ChatService;
 import com.client.util.ImageUtils;
 import com.client.util.StyleConstants;
 import com.client.util.TimeUtils;
-import com.google.gson.*;
+import com.google.gson.Gson;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.Scene;
-import javafx.scene.control.*;
+import javafx.scene.control.Alert;
+import javafx.scene.control.Button;
+import javafx.scene.control.ButtonType;
+import javafx.scene.control.ContextMenu;
+import javafx.scene.control.Label;
+import javafx.scene.control.MenuItem;
+import javafx.scene.control.OverrunStyle;
+import javafx.scene.control.ScrollPane;
+import javafx.scene.control.SeparatorMenuItem;
+import javafx.scene.control.TextField;
+import javafx.scene.control.TextInputControl;
+import javafx.scene.control.Tooltip;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
-import javafx.scene.image.WritableImage;
-import javafx.scene.layout.*;
+import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
+import javafx.scene.layout.StackPane;
+import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
 import javafx.scene.paint.ImagePattern;
 import javafx.scene.shape.Circle;
@@ -26,10 +61,6 @@ import javafx.stage.Modality;
 import javafx.stage.Popup;
 import javafx.stage.Stage;
 import javafx.stage.StageStyle;
-
-import java.io.ByteArrayInputStream;
-import java.util.*;
-import java.util.concurrent.*;
 
 /**
  * Main chat view — composes left panel (contacts), center panel (messages),
@@ -57,6 +88,10 @@ public class ChatView {
     private Label typingLabel;
     private Label loadingIndicator;
     private Button leaveGroupBtn;
+    private HBox pinPolicyBox;
+    private javafx.scene.control.CheckBox adminOnlyPinCheckBox;
+    private HBox pinnedMessagesBar;
+    private Label pinnedMessagesLabel;
 
     // Message search fields
     private TextField messageSearchField;
@@ -84,14 +119,18 @@ public class ChatView {
     private final Map<Long, Label> messageStatusLabels = new HashMap<>();
     private final Map<Long, Boolean> peerOnlineByPeerId = new HashMap<>();
     private final Map<Long, Node> messageBubbleById = new HashMap<>();
+    private final Map<Long, String> messageContentById = new HashMap<>();
+    private final Map<Long, String> messageTypeById = new HashMap<>();
     private final Map<Long, Integer> unreadCounts = new HashMap<>();
     private final Map<Long, String> conversationDisplayNames = new HashMap<>();
+    private final Map<Long, String> conversationUserRoles = new HashMap<>();
     private final Map<Long, Label> unreadBadgesByConvId = new HashMap<>();
     private final List<Stage> activeNotificationStages = new ArrayList<>();
     private final Map<Long, List<Circle>> peerAvatarCircles = new ConcurrentHashMap<>();
     private final Map<Long, Image> peerAvatarCache = new ConcurrentHashMap<>();
     private final Map<Long, HBox> messageSeenContainers = new HashMap<>();
     private final Map<Long, List<ReaderInfo>> messageSeenUsers = new HashMap<>();
+    private final Map<Long, List<VBox>> quoteBoxesByReplyToId = new HashMap<>();
 
     // Message search state
     private final List<JsonObject> messageSearchMatches = new ArrayList<>();
@@ -113,6 +152,12 @@ public class ChatView {
     private Label forwardPreviewContentLabel;
     private Long activeForwardFromId = null;
     private String activeForwardFromUsername = null;
+
+    // Message edit state
+    private HBox editPreviewBar;
+    private Label editPreviewContentLabel;
+    private Long activeEditMessageId = null;
+    private String activeEditOriginalContent = null;
     private String activeForwardFromContent = null;
 
     // Pagination
@@ -187,6 +232,9 @@ public class ChatView {
         tcp.setOnUserStatusChange(this::onUserStatusChange);
         tcp.setOnUserAvatarChanged(this::onUserAvatarChanged);
         tcp.setOnMessageStatusChanged(this::onMessageStatusChanged);
+        tcp.setOnMessageEdited(this::onMessageEdited);
+        tcp.setOnMessageDeleted(this::onMessageDeleted);
+        tcp.setOnMessagePinned(this::onMessagePinned);
         tcp.setOnLeftGroup(this::onLeftGroupReceived);
         tcp.setOnFriendRequestReceived(this::onFriendRequestReceived);
         tcp.setOnFriendAccepted(this::onFriendAccepted);
@@ -205,6 +253,7 @@ public class ChatView {
         long conversationId = json.get("conversationId").getAsLong();
         long senderId = json.get("senderId").getAsLong();
         String content = json.get("content").getAsString();
+        String type = json.has("type") ? json.get("type").getAsString() : "TEXT";
         long messageId = json.has("messageId") ? json.get("messageId").getAsLong() : -1;
         String senderUsername = json.has("senderUsername") && !json.get("senderUsername").isJsonNull()
                 ? json.get("senderUsername").getAsString() : "Unknown";
@@ -228,10 +277,10 @@ public class ChatView {
 
             if (senderId == currentUserId) {
                 String status = json.has("messageStatus") ? json.get("messageStatus").getAsString() : "SENT";
-                addSentMessage(content, messageId, status, replyToId, replyToUsername, replyToContent,
+                addSentMessage(content, type, messageId, status, replyToId, replyToUsername, replyToContent,
                         forwardFromId, forwardFromUsername, forwardFromContent);
             } else {
-                addReceivedMessage(senderId, senderUsername, content, messageId, replyToId, replyToUsername, replyToContent,
+                addReceivedMessage(senderId, senderUsername, content, type, messageId, replyToId, replyToUsername, replyToContent,
                         forwardFromId, forwardFromUsername, forwardFromContent);
                 if (messageId > 0) controller.markMessageSeen(currentConversationId, messageId);
             }
@@ -241,7 +290,8 @@ public class ChatView {
             updateUnreadBadge(conversationId);
             String senderName = json.has("senderUsername") ? json.get("senderUsername").getAsString()
                     : conversationDisplayNames.getOrDefault(conversationId, "Ai đó");
-            showNewMessageNotification(senderName, content, conversationId, senderId);
+            String notificationText = "IMAGE".equalsIgnoreCase(type) ? "[Hình ảnh]" : content;
+            showNewMessageNotification(senderName, notificationText, conversationId, senderId);
         }
         Platform.runLater(this::loadConversations);
     }
@@ -255,11 +305,19 @@ public class ChatView {
                 Platform.runLater(() -> {
                     currentConversationId = -1;
                     messagesBox.getChildren().clear();
+                    messageContentById.clear();
+                    messageTypeById.clear();
+                    messagePinnedState.clear();
+                    if (pinnedMessagesBar != null) { pinnedMessagesBar.setVisible(false); pinnedMessagesBar.setManaged(false); }
                     if (headerChatName != null) headerChatName.setText("Chọn người để chat");
                     if (chatStatus != null) chatStatus.setText("Offline");
                     if (leaveGroupBtn != null) {
                         leaveGroupBtn.setVisible(false);
                         leaveGroupBtn.setManaged(false);
+                    }
+                    if (pinPolicyBox != null) {
+                        pinPolicyBox.setVisible(false);
+                        pinPolicyBox.setManaged(false);
                     }
                 });
             }
@@ -517,6 +575,10 @@ public class ChatView {
         updateUnreadBadge(conversationId);
         messagesBox.getChildren().clear();
         messageBubbleById.clear();
+        messageContentById.clear();
+        messageTypeById.clear();
+        messagePinnedState.clear();
+        if (pinnedMessagesBar != null) { pinnedMessagesBar.setVisible(false); pinnedMessagesBar.setManaged(false); }
         messageSeenContainers.clear();
         messageSeenUsers.clear();
         highlightedMessageBubble = null;
@@ -548,6 +610,10 @@ public class ChatView {
                 leaveGroupBtn.setVisible(false);
                 leaveGroupBtn.setManaged(false);
             }
+            if (pinPolicyBox != null) {
+                pinPolicyBox.setVisible(false);
+                pinPolicyBox.setManaged(false);
+            }
         } else {
             // Group conversation — show "Members" in status and a group icon colour
             if (chatStatus != null) {
@@ -564,6 +630,26 @@ public class ChatView {
                 leaveGroupBtn.setVisible(true);
                 leaveGroupBtn.setManaged(true);
             }
+            // Show pin policy toggle for group conversations
+            if (pinPolicyBox != null) {
+                pinPolicyBox.setVisible(true);
+                pinPolicyBox.setManaged(true);
+            }
+            // Enable/disable pin policy checkbox based on user role
+            if (adminOnlyPinCheckBox != null) {
+                String userRole = conversationUserRoles.get(conversationId);
+                boolean isAdminOrOwner = "ADMIN".equals(userRole) || "OWNER".equals(userRole);
+                adminOnlyPinCheckBox.setDisable(!isAdminOrOwner);
+                adminOnlyPinCheckBox.setStyle("-fx-text-fill: " + (isAdminOrOwner ? StyleConstants.TEXT_MUTED : "#666666")
+                        + "; -fx-font-size: 12px;");
+                if (!isAdminOrOwner) {
+                    // Re-fetch current admin_only_pin value from server to keep display accurate
+                    // Also add tooltip
+                    adminOnlyPinCheckBox.setTooltip(new Tooltip("Chỉ quản trị viên mới được thay đổi chính sách này"));
+                } else {
+                    adminOnlyPinCheckBox.setTooltip(null);
+                }
+            }
         }
 
         loadConversations();
@@ -578,6 +664,7 @@ public class ChatView {
         statusDotsByPeerId.clear();
         conversationIdByPeerId.clear();
         peerIdByConversationId.clear();
+        conversationUserRoles.clear();
 
         controller.loadConversations(
                 data -> {
@@ -609,6 +696,12 @@ public class ChatView {
     private void addContactWithPresence(long conversationId, String name, String lastMsg,
                                          boolean selected, JsonObject conv) {
         conversationDisplayNames.put(conversationId, name);
+        // Store user role for group conversations
+        if (conv.has("userRole") && !conv.get("userRole").isJsonNull()) {
+            conversationUserRoles.put(conversationId, conv.get("userRole").getAsString());
+        } else {
+            conversationUserRoles.remove(conversationId);
+        }
         HBox contact = new HBox(12);
         contact.setAlignment(Pos.CENTER_LEFT);
         contact.setPadding(new Insets(12, 14, 12, 14));
@@ -658,9 +751,21 @@ public class ChatView {
         nameLabel.setStyle("-fx-font-size: 15px; -fx-font-weight: bold; -fx-text-fill: " + StyleConstants.TEXT_WHITE + ";");
 
         String formattedLastMsg = lastMsg;
-        if (lastMsg != null && !lastMsg.isEmpty() && conv.has("lastMessageSenderId")) {
+        String lastMsgType = conv.has("lastMessageType") && !conv.get("lastMessageType").isJsonNull()
+                ? conv.get("lastMessageType").getAsString() : "TEXT";
+        String displayContent = "IMAGE".equalsIgnoreCase(lastMsgType) ? "[Hình ảnh]" : lastMsg;
+
+        if (displayContent != null && !displayContent.isEmpty() && conv.has("lastMessageSenderId")) {
             long senderId = conv.get("lastMessageSenderId").getAsLong();
-            if (senderId != currentUserId) formattedLastMsg = name + ": " + lastMsg;
+            if (senderId == currentUserId) {
+                formattedLastMsg = "Bạn: " + displayContent;
+            } else {
+                String senderName = conv.has("lastMessageSenderName") && !conv.get("lastMessageSenderName").isJsonNull()
+                        ? conv.get("lastMessageSenderName").getAsString() : name;
+                formattedLastMsg = senderName + ": " + displayContent;
+            }
+        } else {
+            formattedLastMsg = displayContent;
         }
 
         Label msgLabel = new Label(formattedLastMsg);
@@ -764,7 +869,9 @@ public class ChatView {
         if (reset) {
             messagesBox.getChildren().clear();
             messageBubbleById.clear();
+            messagePinnedState.clear();
             messageStatusLabels.clear();
+            quoteBoxesByReplyToId.clear();
             highlightedMessageBubble = null;
             highlightedMessageStyle = null;
         }
@@ -780,6 +887,7 @@ public class ChatView {
             long senderId = msg.get("senderId").getAsLong();
             String content = msg.get("content").getAsString();
             String status = msg.has("status") ? msg.get("status").getAsString() : "SENT";
+            String type = msg.has("type") ? msg.get("type").getAsString() : "TEXT";
 
             List<ReaderInfo> seenUsers = new ArrayList<>();
             if (msg.has("seenByUsers") && msg.get("seenByUsers").isJsonArray()) {
@@ -811,10 +919,17 @@ public class ChatView {
             String forwardFromContent = msg.has("forwardFromContent") && !msg.get("forwardFromContent").isJsonNull()
                     ? msg.get("forwardFromContent").getAsString() : null;
 
+            boolean pinned = msg.has("pinned") && msg.get("pinned").getAsBoolean();
+            if (messageId > 0) {
+                setMessagePinnedState(messageId, pinned);
+            }
+            boolean isDeleted = msg.has("isDeleted") && !msg.get("isDeleted").isJsonNull() && msg.get("isDeleted").getAsBoolean();
             boolean isMine = (senderId == currentUserId);
             HBox seenContainer = createSeenContainer(isMine);
             if (messageId > 0) {
                 messageSeenContainers.put(messageId, seenContainer);
+                messageContentById.put(messageId, content);
+                messageTypeById.put(messageId, type);
             }
 
             HBox wrapper;
@@ -826,22 +941,39 @@ public class ChatView {
 
                 boolean isFwd = (forwardFromId != null);
                 String displayContent = content;
-                if (isFwd) {
+                if (isFwd && !"IMAGE".equalsIgnoreCase(type)) {
                     String fwdContent = forwardFromContent != null ? forwardFromContent : "";
                     displayContent = (content != null && !content.isEmpty()) ? content + "\n" + fwdContent : fwdContent;
                 }
-                Node bubble = createMessageBubble(displayContent, StyleConstants.ACCENT, "18px 18px 4px 18px");
+                
+                Node bubble;
+                if (isDeleted) {
+                    Label deletedLabel = new Label("Tin nhắn đã bị thu hồi");
+                    deletedLabel.setStyle("-fx-text-fill: #888888; -fx-font-size: 14px; -fx-font-style: italic; -fx-padding: 8px 12px; -fx-background-color: #2b2b2b; -fx-background-radius: 10px;");
+                    deletedLabel.setMaxWidth(360);
+                    bubble = deletedLabel;
+                } else {
+                    bubble = createMessageBubble(displayContent, type, StyleConstants.ACCENT, "18px 18px 4px 18px");
+                }
+                
                 if (messageId > 0) messageBubbleById.put(messageId, bubble);
-                addContextMenuToBubble(bubble, messageId, "Bạn", displayContent);
+                if (!isDeleted) {
+                    addContextMenuToBubble(bubble, messageId, "Bạn", displayContent, type);
+                }
 
                 VBox bubbleGroup = new VBox(4);
                 bubbleGroup.setAlignment(Pos.TOP_RIGHT);
-                if (isFwd) {
-                    Label forwardLabel = new Label("Bạn đã chuyển tiếp một tin nhắn");
+                if (pinned) {
+                    Label pinLabel = new Label("\uD83D\uDCCC Đã ghim");
+                    pinLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #ffd166; -fx-font-style: italic; -fx-padding: 0 4px 2px 0;");
+                    bubbleGroup.getChildren().add(pinLabel);
+                }
+                if (isFwd && !isDeleted) {
+                    Label forwardLabel = new Label("Đã chuyển tiếp một tin nhắn");
                     forwardLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #888888; -fx-font-style: italic; -fx-padding: 0 4px 2px 0;");
                     bubbleGroup.getChildren().add(forwardLabel);
                 }
-                if (replyToId != null) {
+                if (replyToId != null && !isDeleted) {
                     VBox quoteBox = createQuoteBox(replyToId, replyToUsername, replyToContent, true);
                     quoteBox.setMaxWidth(360);
                     bubbleGroup.getChildren().add(quoteBox);
@@ -851,14 +983,17 @@ public class ChatView {
                 Label statusLabel = new Label(ChatController.getStatusLabelText(status));
                 statusLabel.setStyle("-fx-font-size: 10px; -fx-text-fill: #888888; -fx-padding: 0 4px 0 0;");
                 if (messageId > 0) messageStatusLabels.put(messageId, statusLabel);
+                if (isDeleted) {
+                    statusLabel.setVisible(false);
+                }
 
                 container.getChildren().addAll(bubbleGroup, statusLabel, seenContainer);
                 wrapper.getChildren().add(container);
             } else {
                 String senderUsername = msg.has("senderUsername") && !msg.get("senderUsername").isJsonNull()
                         ? msg.get("senderUsername").getAsString() : "Unknown";
-                wrapper = createMessageWrapper(senderId, senderUsername, content, messageId, seenContainer,
-                        replyToId, replyToUsername, replyToContent, forwardFromId, forwardFromUsername, forwardFromContent);
+                wrapper = createMessageWrapper(senderId, senderUsername, content, type, messageId, seenContainer,
+                        replyToId, replyToUsername, replyToContent, forwardFromId, forwardFromUsername, forwardFromContent, isDeleted);
             }
             messagesBox.getChildren().add(insertIndex++, wrapper);
 
@@ -871,6 +1006,7 @@ public class ChatView {
         currentMessageOffset = offset + msgCount;
         hasMoreMessages = json.has("hasMore") ? json.get("hasMore").getAsBoolean() : msgCount >= PAGE_SIZE;
         hideAllStatusLabelsExceptLast();
+        refreshPinnedMessagesBar();
     }
 
     private void hideAllStatusLabelsExceptLast() {
@@ -916,20 +1052,31 @@ public class ChatView {
 
     // ==================== MESSAGE BUBBLES ====================
 
-    private HBox createMessageWrapper(long senderId, String senderUsername, String text, long messageId, HBox seenContainer) {
-        return createMessageWrapper(senderId, senderUsername, text, messageId, seenContainer, null, null, null, null, null, null);
+    private HBox createMessageWrapper(long senderId, String senderUsername, String text, String type, long messageId, HBox seenContainer) {
+        return createMessageWrapper(senderId, senderUsername, text, type, messageId, seenContainer, null, null, null, null, null, null, false);
     }
 
-    private HBox createMessageWrapper(long senderId, String senderUsername, String text, long messageId, HBox seenContainer,
+    private HBox createMessageWrapper(long senderId, String senderUsername, String text, String type, long messageId, HBox seenContainer,
             Long replyToId, String replyToUsername, String replyToContent) {
-        return createMessageWrapper(senderId, senderUsername, text, messageId, seenContainer, replyToId, replyToUsername, replyToContent, null, null, null);
+        return createMessageWrapper(senderId, senderUsername, text, type, messageId, seenContainer, replyToId, replyToUsername, replyToContent, null, null, null, false);
     }
 
-    private HBox createMessageWrapper(long senderId, String senderUsername, String text, long messageId, HBox seenContainer,
+    private HBox createMessageWrapper(long senderId, String senderUsername, String text, String type, long messageId, HBox seenContainer,
             Long replyToId, String replyToUsername, String replyToContent,
             Long forwardFromId, String forwardFromUsername, String forwardFromContent) {
+        return createMessageWrapper(senderId, senderUsername, text, type, messageId, seenContainer, replyToId, replyToUsername, replyToContent, forwardFromId, forwardFromUsername, forwardFromContent, false);
+    }
+
+    private HBox createMessageWrapper(long senderId, String senderUsername, String text, String type, long messageId, HBox seenContainer,
+            Long replyToId, String replyToUsername, String replyToContent,
+            Long forwardFromId, String forwardFromUsername, String forwardFromContent, boolean isDeleted) {
         HBox wrapper = new HBox(8);
         wrapper.setAlignment(senderId == currentUserId ? Pos.CENTER_RIGHT : Pos.CENTER_LEFT);
+
+        if (messageId > 0) {
+            messageContentById.put(messageId, text);
+            messageTypeById.put(messageId, type);
+        }
 
         if (senderId == currentUserId) {
             String bg = StyleConstants.ACCENT;
@@ -937,22 +1084,34 @@ public class ChatView {
             // For forwarded messages: bubble content = forwarded content (+ user text if any)
             String displayText = text;
             boolean isForward = (forwardFromId != null);
-            if (isForward) {
+            if (isForward && !"IMAGE".equalsIgnoreCase(type)) {
                 String fwdContent = forwardFromContent != null ? forwardFromContent : "";
                 displayText = (text != null && !text.isEmpty()) ? text + "\n" + fwdContent : fwdContent;
             }
-            Node bubble = createMessageBubble(displayText, bg, radius);
+            
+            Node bubble;
+            if (isDeleted) {
+                Label deletedLabel = new Label("Tin nhắn đã bị thu hồi");
+                deletedLabel.setStyle("-fx-text-fill: #888888; -fx-font-size: 14px; -fx-font-style: italic; -fx-padding: 8px 12px; -fx-background-color: #2b2b2b; -fx-background-radius: 10px;");
+                deletedLabel.setMaxWidth(360);
+                bubble = deletedLabel;
+            } else {
+                bubble = createMessageBubble(displayText, type, bg, radius);
+            }
+            
             if (messageId > 0) messageBubbleById.put(messageId, bubble);
-            addContextMenuToBubble(bubble, messageId, "Bạn", displayText);
+            if (!isDeleted) {
+                addContextMenuToBubble(bubble, messageId, "Bạn", displayText, type);
+            }
 
             VBox bubbleGroup = new VBox(4);
             bubbleGroup.setAlignment(Pos.TOP_RIGHT);
-            if (isForward) {
-                Label forwardLabel = new Label("Bạn đã chuyển tiếp một tin nhắn");
+            if (isForward && !isDeleted) {
+                Label forwardLabel = new Label("Đã chuyển tiếp một tin nhắn");
                 forwardLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #888888; -fx-font-style: italic; -fx-padding: 0 4px 2px 0;");
                 bubbleGroup.getChildren().add(forwardLabel);
             }
-            if (replyToId != null) {
+            if (replyToId != null && !isDeleted) {
                 VBox quoteBox = createQuoteBox(replyToId, replyToUsername, replyToContent, true);
                 quoteBox.setMaxWidth(360);
                 bubbleGroup.getChildren().add(quoteBox);
@@ -977,23 +1136,40 @@ public class ChatView {
             // For forwarded messages: bubble content = forwarded content (+ user text if any)
             String displayText2 = text;
             boolean isForward2 = (forwardFromId != null);
-            if (isForward2) {
+            if (isForward2 && !"IMAGE".equalsIgnoreCase(type)) {
                 String fwdContent = forwardFromContent != null ? forwardFromContent : "";
                 displayText2 = (text != null && !text.isEmpty()) ? text + "\n" + fwdContent : fwdContent;
             }
-            Node bubble = createMessageBubble(displayText2, bg, radius);
+            
+            Node bubble;
+            if (isDeleted) {
+                Label deletedLabel = new Label("Tin nhắn đã bị thu hồi");
+                deletedLabel.setStyle("-fx-text-fill: #888888; -fx-font-size: 14px; -fx-font-style: italic; -fx-padding: 8px 12px; -fx-background-color: #2b2b2b; -fx-background-radius: 10px;");
+                deletedLabel.setMaxWidth(360);
+                bubble = deletedLabel;
+            } else {
+                bubble = createMessageBubble(displayText2, type, bg, radius);
+            }
+            
             if (messageId > 0) messageBubbleById.put(messageId, bubble);
-            addContextMenuToBubble(bubble, messageId, senderUsername, displayText2);
+            if (!isDeleted) {
+                addContextMenuToBubble(bubble, messageId, senderUsername, displayText2, type);
+            }
 
             VBox bubbleGroup = new VBox(4);
             bubbleGroup.setAlignment(Pos.TOP_LEFT);
-            if (isForward2) {
-                String fwdLabelText = (senderUsername != null ? senderUsername : "Ai đó") + " đã chuyển tiếp một tin nhắn";
-                Label forwardLabel = new Label(fwdLabelText);
+            // Show pin indicator if message is pinned
+            if (messageId > 0 && isMessagePinned(messageId)) {
+                Label pinLabel = new Label("\uD83D\uDCCC Đã ghim");
+                pinLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #ffd166; -fx-font-style: italic; -fx-padding: 0 0 2px 4px;");
+                bubbleGroup.getChildren().add(pinLabel);
+            }
+            if (isForward2 && !isDeleted) {
+                Label forwardLabel = new Label("Đã chuyển tiếp một tin nhắn");
                 forwardLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #888888; -fx-font-style: italic; -fx-padding: 0 0 2px 4px;");
                 bubbleGroup.getChildren().add(forwardLabel);
             }
-            if (replyToId != null) {
+            if (replyToId != null && !isDeleted) {
                 VBox quoteBox = createQuoteBox(replyToId, replyToUsername, replyToContent, false);
                 quoteBox.setMaxWidth(360);
                 bubbleGroup.getChildren().add(quoteBox);
@@ -1004,25 +1180,27 @@ public class ChatView {
             wrapper.getChildren().addAll(avatar, container);
         }
         // Enable click on entire message (including quote) to reply
-        wrapper.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_CLICKED, e -> {
-            if (e.getButton() == javafx.scene.input.MouseButton.PRIMARY) {
-                setReplyTarget(messageId, senderUsername, text);
-                e.consume();
-            }
-        });
+        if (!isDeleted) {
+            wrapper.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_CLICKED, e -> {
+                if (e.getButton() == javafx.scene.input.MouseButton.PRIMARY) {
+                    setReplyTarget(messageId, senderUsername, text, type);
+                    e.consume();
+                }
+            });
+        }
         return wrapper;
     }
 
     private void addReceivedMessage(long senderId, String senderUsername, String text, long messageId) {
-        addReceivedMessage(senderId, senderUsername, text, messageId, null, null, null, null, null, null);
+        addReceivedMessage(senderId, senderUsername, text, "TEXT", messageId, null, null, null, null, null, null);
     }
 
     private void addReceivedMessage(long senderId, String senderUsername, String text, long messageId,
             Long replyToId, String replyToUsername, String replyToContent) {
-        addReceivedMessage(senderId, senderUsername, text, messageId, replyToId, replyToUsername, replyToContent, null, null, null);
+        addReceivedMessage(senderId, senderUsername, text, "TEXT", messageId, replyToId, replyToUsername, replyToContent, null, null, null);
     }
 
-    private void addReceivedMessage(long senderId, String senderUsername, String text, long messageId,
+    private void addReceivedMessage(long senderId, String senderUsername, String text, String type, long messageId,
             Long replyToId, String replyToUsername, String replyToContent,
             Long forwardFromId, String forwardFromUsername, String forwardFromContent) {
         HBox seenContainer = createSeenContainer(false);
@@ -1030,21 +1208,21 @@ public class ChatView {
             messageSeenContainers.put(messageId, seenContainer);
             messageSeenUsers.put(messageId, new ArrayList<>());
         }
-        messagesBox.getChildren().add(createMessageWrapper(senderId, senderUsername, text, messageId, seenContainer,
+        messagesBox.getChildren().add(createMessageWrapper(senderId, senderUsername, text, type, messageId, seenContainer,
                 replyToId, replyToUsername, replyToContent, forwardFromId, forwardFromUsername, forwardFromContent));
         for (Label label : messageStatusLabels.values()) label.setVisible(false);
     }
 
     private void addSentMessage(String text, long messageId, String status) {
-        addSentMessage(text, messageId, status, null, null, null, null, null, null);
+        addSentMessage(text, "TEXT", messageId, status, null, null, null, null, null, null);
     }
 
     private void addSentMessage(String text, long messageId, String status,
             Long replyToId, String replyToUsername, String replyToContent) {
-        addSentMessage(text, messageId, status, replyToId, replyToUsername, replyToContent, null, null, null);
+        addSentMessage(text, "TEXT", messageId, status, replyToId, replyToUsername, replyToContent, null, null, null);
     }
 
-    private void addSentMessage(String text, long messageId, String status,
+    private void addSentMessage(String text, String type, long messageId, String status,
             Long replyToId, String replyToUsername, String replyToContent,
             Long forwardFromId, String forwardFromUsername, String forwardFromContent) {
         for (Label oldLabel : messageStatusLabels.values()) oldLabel.setVisible(false);
@@ -1056,18 +1234,18 @@ public class ChatView {
 
         boolean isForward = (forwardFromId != null);
         String displayText = text;
-        if (isForward) {
+        if (isForward && !"IMAGE".equalsIgnoreCase(type)) {
             String fwdContent = forwardFromContent != null ? forwardFromContent : "";
             displayText = (text != null && !text.isEmpty()) ? text + "\n" + fwdContent : fwdContent;
         }
-        Node bubble = createMessageBubble(displayText, StyleConstants.ACCENT, "18px 18px 4px 18px");
+        Node bubble = createMessageBubble(displayText, type, StyleConstants.ACCENT, "18px 18px 4px 18px");
         if (messageId > 0) messageBubbleById.put(messageId, bubble);
-        addContextMenuToBubble(bubble, messageId, "Bạn", displayText);
+        addContextMenuToBubble(bubble, messageId, "Bạn", displayText, type);
 
         VBox bubbleGroup = new VBox(4);
         bubbleGroup.setAlignment(Pos.TOP_RIGHT);
         if (isForward) {
-            Label forwardLabel = new Label("Bạn đã chuyển tiếp một tin nhắn");
+            Label forwardLabel = new Label("Đã chuyển tiếp một tin nhắn");
             forwardLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #888888; -fx-font-style: italic; -fx-padding: 0 4px 2px 0;");
             bubbleGroup.getChildren().add(forwardLabel);
         }
@@ -1093,7 +1271,11 @@ public class ChatView {
         messagesBox.getChildren().add(wrapper);
     }
 
-    private Node createMessageBubble(String text, String bg, String radius) {
+    private Node createMessageBubble(String text, String type, String bg, String radius) {
+        if ("IMAGE".equalsIgnoreCase(type)) {
+            return createImageBubble(text, radius);
+        }
+
         Node content = EmojiManager.getInstance().renderMessage(text);
 
         // If the rendered content is a TextFlow (multi-node), wrap in styling container
@@ -1124,7 +1306,67 @@ public class ChatView {
         return content;
     }
 
-    private void addContextMenuToBubble(Node bubble, long messageId, String senderUsername, String content) {
+    private Node createImageBubble(String base64Data, String radius) {
+        try {
+            byte[] imageBytes = Base64.getDecoder().decode(base64Data.trim());
+            Image image = new Image(new ByteArrayInputStream(imageBytes));
+            ImageView imageView = new ImageView(image);
+            imageView.setPreserveRatio(true);
+            imageView.setFitWidth(220);
+            imageView.setFitHeight(220);
+
+            javafx.scene.shape.Rectangle clip = new javafx.scene.shape.Rectangle();
+            clip.setArcWidth(16);
+            clip.setArcHeight(16);
+            clip.widthProperty().bind(imageView.fitWidthProperty());
+            clip.heightProperty().bind(imageView.fitHeightProperty());
+
+            imageView.layoutBoundsProperty().addListener((obs, oldBounds, newBounds) -> {
+                clip.setWidth(newBounds.getWidth());
+                clip.setHeight(newBounds.getHeight());
+            });
+            imageView.setClip(clip);
+
+            StackPane imageWrapper = new StackPane(imageView);
+            imageWrapper.setStyle("-fx-background-color: transparent; -fx-padding: 4px;");
+
+            imageView.setCursor(javafx.scene.Cursor.HAND);
+            imageView.setOnMouseClicked(e -> {
+                if (e.getButton() == javafx.scene.input.MouseButton.PRIMARY && e.getClickCount() == 2) {
+                    showLargeImagePopup(image);
+                }
+            });
+
+            return imageWrapper;
+        } catch (Exception e) {
+            Label errLabel = new Label("[Hình ảnh lỗi hoặc không tải được]");
+            errLabel.setStyle("-fx-text-fill: #ff4a4a; -fx-font-style: italic; -fx-font-size: 13px; -fx-padding: 8px;");
+            return errLabel;
+        }
+    }
+
+    private void showLargeImagePopup(Image image) {
+        Stage popupStage = new Stage(StageStyle.TRANSPARENT);
+        popupStage.initModality(Modality.APPLICATION_MODAL);
+        popupStage.initOwner(stage);
+
+        ImageView largeView = new ImageView(image);
+        largeView.setPreserveRatio(true);
+        largeView.setFitWidth(800);
+        largeView.setFitHeight(600);
+
+        StackPane rootPane = new StackPane(largeView);
+        rootPane.setStyle("-fx-background-color: rgba(0, 0, 0, 0.85); -fx-padding: 24px;");
+
+        rootPane.setOnMouseClicked(e -> popupStage.close());
+
+        Scene scene = new Scene(rootPane);
+        scene.setFill(Color.TRANSPARENT);
+        popupStage.setScene(scene);
+        popupStage.show();
+    }
+
+    private void addContextMenuToBubble(Node bubble, long messageId, String senderUsername, String content, String type) {
         if (messageId <= 0) return;
         ContextMenu menu = new ContextMenu();
         menu.setStyle("-fx-background-color: #222222; -fx-border-color: #333333; -fx-border-width: 1px; -fx-background-radius: 10px; -fx-border-radius: 10px; -fx-padding: 6px;");
@@ -1135,9 +1377,66 @@ public class ChatView {
 
         MenuItem replyItem = new MenuItem("Phản hồi");
         replyItem.setStyle("-fx-text-fill: white; -fx-font-size: 14px; -fx-font-weight: bold; -fx-padding: 8px 16px;");
-        replyItem.setOnAction(e -> setReplyTarget(messageId, senderUsername, content));
+        replyItem.setOnAction(e -> setReplyTarget(messageId, senderUsername, content, type));
 
         menu.getItems().addAll(forwardItem, replyItem);
+
+        // Pin / Unpin item
+        // Determine if this message is currently pinned by checking the messageSeenUsers (we store pinned state)
+        // For simplicity, always show Pin when !pinned and Unpin when pinned (check via messageBubbleById)
+        // Actually, we need a better way. Let's get the pinned state from the existing message data.
+        boolean msgPinned = isMessagePinned(messageId);
+        if (msgPinned) {
+            MenuItem unpinItem = new MenuItem("Bỏ ghim");
+            unpinItem.setStyle("-fx-text-fill: #ffd166; -fx-font-size: 14px; -fx-font-weight: bold; -fx-padding: 8px 16px;");
+            unpinItem.setOnAction(e -> {
+                // Optimistic update — apply immediately
+                applyPinStateToBubble(messageId, false);
+                refreshPinnedMessagesBar();
+                controller.unpinMessage(messageId, currentConversationId,
+                        () -> Platform.runLater(() -> showToast("Đã bỏ ghim tin nhắn")),
+                        err -> Platform.runLater(() -> {
+                            // Revert on failure
+                            applyPinStateToBubble(messageId, true);
+                            refreshPinnedMessagesBar();
+                            showToast("Bỏ ghim thất bại: " + err);
+                        }));
+            });
+            menu.getItems().add(unpinItem);
+        } else {
+            MenuItem pinItem = new MenuItem("Ghim tin nhắn");
+            pinItem.setStyle("-fx-text-fill: #ffd166; -fx-font-size: 14px; -fx-font-weight: bold; -fx-padding: 8px 16px;");
+            pinItem.setOnAction(e -> {
+                // Optimistic update — apply immediately
+                applyPinStateToBubble(messageId, true);
+                refreshPinnedMessagesBar();
+                controller.pinMessage(messageId, currentConversationId,
+                        () -> Platform.runLater(() -> showToast("Đã ghim tin nhắn")),
+                        err -> Platform.runLater(() -> {
+                            // Revert on failure
+                            applyPinStateToBubble(messageId, false);
+                            refreshPinnedMessagesBar();
+                            showToast("Ghim thất bại: " + err);
+                        }));
+            });
+            menu.getItems().add(pinItem);
+        }
+
+        if ("Bạn".equals(senderUsername)) {
+            // Sửa tin nhắn chỉ hoạt động cho tin nhắn TEXT
+            if (!"IMAGE".equalsIgnoreCase(type)) {
+                MenuItem editItem = new MenuItem("Sửa");
+                editItem.setStyle("-fx-text-fill: white; -fx-font-size: 14px; -fx-font-weight: bold; -fx-padding: 8px 16px;");
+                editItem.setOnAction(e -> startEditMessage(messageId, content));
+                menu.getItems().add(editItem);
+            }
+
+            MenuItem deleteItem = new MenuItem("Xóa");
+            deleteItem.setStyle("-fx-text-fill: #ff4a4a; -fx-font-size: 14px; -fx-font-weight: bold; -fx-padding: 8px 16px;");
+            deleteItem.setOnAction(e -> deleteMessage(messageId));
+
+            menu.getItems().add(deleteItem);
+        }
 
         // Attach context menu for right‑click
         if (bubble instanceof javafx.scene.control.Control) {
@@ -1148,7 +1447,7 @@ public class ChatView {
         // Left‑click (primary button) should also trigger reply
         bubble.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_CLICKED, e -> {
             if (e.getButton() == javafx.scene.input.MouseButton.PRIMARY) {
-                setReplyTarget(messageId, senderUsername, content);
+                setReplyTarget(messageId, senderUsername, content, type);
                 e.consume();
             }
         });
@@ -1158,11 +1457,65 @@ public class ChatView {
                 child.setOnContextMenuRequested(e -> menu.show(child, e.getScreenX(), e.getScreenY()));
                 child.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_CLICKED, e -> {
                     if (e.getButton() == javafx.scene.input.MouseButton.PRIMARY) {
-                        setReplyTarget(messageId, senderUsername, content);
+                        setReplyTarget(messageId, senderUsername, content, type);
                         e.consume();
                     }
                 });
             }
+        }
+    }
+
+    private final Map<Long, Boolean> messagePinnedState = new HashMap<>();
+
+    private boolean isMessagePinned(long messageId) {
+        return messagePinnedState.getOrDefault(messageId, false);
+    }
+
+    private void setMessagePinnedState(long messageId, boolean pinned) {
+        messagePinnedState.put(messageId, pinned);
+    }
+
+    private void applyPinStateToBubble(long messageId, boolean isPinned) {
+        setMessagePinnedState(messageId, isPinned);
+        Node bubble = messageBubbleById.get(messageId);
+        if (bubble == null) return;
+        if (!(bubble.getParent() instanceof VBox)) return;
+        VBox container = (VBox) bubble.getParent();
+
+        String pinStyle = "-fx-font-size: 11px; -fx-text-fill: #ffd166; -fx-font-style: italic; -fx-padding: 0 4px 2px 0;";
+
+        // Look for existing pin label in the container's children
+        Label existingPinLabel = null;
+        VBox existingPinGroup = null;
+        for (javafx.scene.Node child : container.getChildren()) {
+            if (child instanceof VBox) {
+                VBox group = (VBox) child;
+                if (!group.getChildren().isEmpty() && group.getChildren().get(0) instanceof Label) {
+                    Label first = (Label) group.getChildren().get(0);
+                    if ("\uD83D\uDCCC Đã ghim".equals(first.getText())) {
+                        existingPinLabel = first;
+                        existingPinGroup = group;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (isPinned && existingPinLabel == null) {
+            // Add pin label at the top of the bubble group
+            for (javafx.scene.Node child : container.getChildren()) {
+                if (child instanceof VBox) {
+                    VBox group = (VBox) child;
+                    if (group.getChildren().contains(bubble)) {
+                        Label newPinLabel = new Label("\uD83D\uDCCC Đã ghim");
+                        newPinLabel.setStyle(pinStyle);
+                        group.getChildren().add(0, newPinLabel);
+                        break;
+                    }
+                }
+            }
+        } else if (!isPinned && existingPinLabel != null && existingPinGroup != null) {
+            existingPinGroup.getChildren().remove(existingPinLabel);
         }
     }
 
@@ -1219,22 +1572,30 @@ public class ChatView {
     private void sendMessage() {
         String text = messageInput.getText().trim();
         if (!text.isEmpty() && controller.getChatService().isConnected() && currentConversationId > 0) {
-            Long replyId = activeReplyToId;
-            Long forwardId = activeForwardFromId;
-            controller.sendMessage(currentConversationId, text, replyId, forwardId,
-                    err -> showToast("Gửi tin nhắn thất bại: " + err));
-            messageInput.clear();
-            cancelReply();
-            cancelForward();
+            if (activeEditMessageId != null) {
+                long msgId = activeEditMessageId;
+                controller.editMessage(msgId, currentConversationId, text,
+                        err -> showToast("Sửa tin nhắn thất bại: " + err));
+                messageInput.clear();
+                cancelEdit();
+            } else {
+                Long replyId = activeReplyToId;
+                Long forwardId = activeForwardFromId;
+                controller.sendMessage(currentConversationId, text, replyId, forwardId,
+                        err -> showToast("Gửi tin nhắn thất bại: " + err));
+                messageInput.clear();
+                cancelReply();
+                cancelForward();
+            }
         }
     }
 
-    private void setReplyTarget(long messageId, String senderUsername, String content) {
+    private void setReplyTarget(long messageId, String senderUsername, String content, String type) {
         cancelForward(); // forward and reply are mutually exclusive
         activeReplyToId = messageId;
         String safeUsername = senderUsername != null && !senderUsername.isBlank() ? senderUsername : "tin nhan";
-        String safeContent = content != null ? content : "";
-        replyPreviewUserLabel.setText("Dang tra loi " + safeUsername);
+        String safeContent = "IMAGE".equalsIgnoreCase(type) ? "[Hình ảnh]" : (content != null ? content : "");
+        replyPreviewUserLabel.setText("Đang trả lời " + safeUsername);
         // Render emoji preview using a container instead of Label graphic
         Node rendered = EmojiManager.getInstance().renderMessagePreview(safeContent);
         // Wrap in a simple container to replace the label's graphic cleanly
@@ -1256,6 +1617,268 @@ public class ChatView {
             replyPreviewBar.setVisible(false);
             replyPreviewBar.setManaged(false);
         }
+    }
+
+    private void cancelEdit() {
+        activeEditMessageId = null;
+        activeEditOriginalContent = null;
+        if (editPreviewBar != null) {
+            editPreviewBar.setVisible(false);
+            editPreviewBar.setManaged(false);
+        }
+        messageInput.clear();
+    }
+
+    private void startEditMessage(long messageId, String content) {
+        cancelReply();
+        cancelForward();
+        activeEditMessageId = messageId;
+        activeEditOriginalContent = content;
+        editPreviewContentLabel.setText(content);
+        if (editPreviewBar != null) {
+            editPreviewBar.setVisible(true);
+            editPreviewBar.setManaged(true);
+        }
+        messageInput.setText(content);
+        messageInput.requestFocus();
+    }
+
+    private void deleteMessage(long messageId) {
+        if (currentConversationId > 0) {
+            controller.deleteMessage(messageId, currentConversationId,
+                    err -> showToast("Xóa tin nhắn thất bại: " + err));
+        }
+    }
+
+    private void onMessageEdited(JsonObject json) {
+        if (!json.has("messageId") || !json.has("conversationId") || !json.has("content")) return;
+        long messageId = json.get("messageId").getAsLong();
+        long conversationId = json.get("conversationId").getAsLong();
+        String content = json.get("content").getAsString();
+
+        if (conversationId != currentConversationId) return;
+
+        Platform.runLater(() -> {
+            Node oldBubble = messageBubbleById.get(messageId);
+            if (oldBubble != null && oldBubble.getParent() instanceof VBox) {
+                VBox parent = (VBox) oldBubble.getParent();
+                int index = parent.getChildren().indexOf(oldBubble);
+                if (index >= 0) {
+                    boolean isMine = parent.getAlignment() == Pos.TOP_RIGHT;
+                    String bg = isMine ? StyleConstants.ACCENT : "#1e1e1e";
+                    String radius = isMine ? "18px 18px 4px 18px" : "18px 18px 18px 4px";
+                    Node newBubble = createMessageBubble(content, "TEXT", bg, radius);
+                    String senderName = isMine ? "Bạn" : "Người khác";
+                    addContextMenuToBubble(newBubble, messageId, senderName, content, "TEXT");
+
+                    // Wrap bubble with "Đã chỉnh sửa" label, similar to forward indicator
+                    VBox editedGroup = new VBox(4);
+                    editedGroup.setAlignment(isMine ? Pos.TOP_RIGHT : Pos.TOP_LEFT);
+                    Label editedLabel = new Label("Đã chỉnh sửa");
+                    String editPadding = isMine ? "-fx-padding: 0 4px 2px 0;" : "-fx-padding: 0 0 2px 4px;";
+                    editedLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #888888; -fx-font-style: italic; " + editPadding);
+                    editedGroup.getChildren().add(editedLabel);
+                    editedGroup.getChildren().add(newBubble);
+
+                    parent.getChildren().set(index, editedGroup);
+                    messageBubbleById.put(messageId, newBubble);
+                }
+            }
+        });
+    }
+
+    private void onMessageDeleted(JsonObject json) {
+        if (!json.has("messageId") || !json.has("conversationId")) return;
+        long messageId = json.get("messageId").getAsLong();
+        long conversationId = json.get("conversationId").getAsLong();
+
+        if (conversationId != currentConversationId) return;
+
+        Platform.runLater(() -> {
+            Node oldBubble = messageBubbleById.get(messageId);
+            if (oldBubble != null && oldBubble.getParent() instanceof VBox) {
+                VBox parent = (VBox) oldBubble.getParent();
+                int index = parent.getChildren().indexOf(oldBubble);
+                if (index >= 0) {
+                    Label deletedLabel = new Label("Tin nhắn đã bị thu hồi");
+                    deletedLabel.setStyle("-fx-text-fill: #888888; -fx-font-size: 14px; -fx-font-style: italic; -fx-padding: 8px 12px; -fx-background-color: #2b2b2b; -fx-background-radius: 10px;");
+                    deletedLabel.setMaxWidth(360);
+                    parent.getChildren().set(index, deletedLabel);
+                    messageBubbleById.remove(messageId);
+                    Label statusLabel = messageStatusLabels.get(messageId);
+                    if (statusLabel != null) {
+                        statusLabel.setVisible(false);
+                    }
+                }
+            }
+
+            // Update reply quote boxes dynamically
+            List<VBox> quotes = quoteBoxesByReplyToId.get(messageId);
+            if (quotes != null) {
+                for (VBox qBox : quotes) {
+                    if (qBox.getChildren().size() >= 2) {
+                        Node textNode = EmojiManager.getInstance().renderMessagePreview("Tin nhắn đã bị thu hồi");
+                        qBox.getChildren().set(1, textNode);
+                    }
+                }
+            }
+        });
+    }
+
+    private void onMessagePinned(JsonObject json) {
+        if (!json.has("messageId") || !json.has("conversationId")) return;
+        long messageId = json.get("messageId").getAsLong();
+        long conversationId = json.get("conversationId").getAsLong();
+
+        if (conversationId != currentConversationId) return;
+
+        // Get the updated message from the event (contains pinned/pinnedBy fields)
+        JsonObject msgObj = json.has("message") ? json.getAsJsonObject("message") : null;
+        boolean isPinned = msgObj != null && msgObj.has("pinned") && msgObj.get("pinned").getAsBoolean();
+
+        // Show toast for remote pin/unpin (not from myself)
+        Long pinnedBy = msgObj != null && msgObj.has("pinnedBy") && !msgObj.get("pinnedBy").isJsonNull()
+                ? msgObj.get("pinnedBy").getAsLong() : null;
+        if (pinnedBy != null && pinnedBy != currentUserId) {
+            String label = isPinned ? "đã ghim một tin nhắn" : "đã bỏ ghim một tin nhắn";
+            showToast("Một người dùng " + label);
+        }
+
+        Platform.runLater(() -> {
+            applyPinStateToBubble(messageId, isPinned);
+            refreshPinnedMessagesBar();
+        });
+    }
+
+    // ==================== PINNED MESSAGES BAR ====================
+
+    private void refreshPinnedMessagesBar() {
+        if (pinnedMessagesBar == null || pinnedMessagesLabel == null) return;
+        Platform.runLater(() -> {
+            int pinnedCount = 0;
+            for (Boolean pinned : messagePinnedState.values()) {
+                if (pinned) pinnedCount++;
+            }
+            if (pinnedCount > 0) {
+                pinnedMessagesLabel.setText("\uD83D\uDCCC " + pinnedCount + " tin nhắn đã ghim — Nhấn để xem");
+                pinnedMessagesBar.setVisible(true);
+                pinnedMessagesBar.setManaged(true);
+            } else {
+                pinnedMessagesBar.setVisible(false);
+                pinnedMessagesBar.setManaged(false);
+            }
+        });
+    }
+
+    private void showPinnedMessagesDialog() {
+        if (currentConversationId <= 0) return;
+
+        // Collect pinned message IDs and their data from messageBubbleById
+        java.util.List<Long> pinnedMsgIds = new java.util.ArrayList<>();
+        for (var entry : messagePinnedState.entrySet()) {
+            if (entry.getValue()) {
+                pinnedMsgIds.add(entry.getKey());
+            }
+        }
+        if (pinnedMsgIds.isEmpty()) return;
+
+        // Create dialog
+        Stage dialog = new Stage();
+        dialog.initModality(Modality.APPLICATION_MODAL);
+        dialog.initOwner(stage);
+        dialog.setTitle("Tin nhắn đã ghim");
+        dialog.initStyle(StageStyle.UTILITY);
+
+        VBox root = new VBox(12);
+        root.setPadding(new Insets(16));
+        root.setStyle("-fx-background-color: #1a1a2e;");
+
+        Label titleLabel = new Label("\uD83D\uDCCC Tin nhắn đã ghim (" + pinnedMsgIds.size() + ")");
+        titleLabel.setStyle("-fx-text-fill: white; -fx-font-size: 16px; -fx-font-weight: bold;");
+
+        VBox listBox = new VBox(6);
+        listBox.setStyle("-fx-background-color: transparent;");
+
+        for (Long msgId : pinnedMsgIds) {
+            Node bubble = messageBubbleById.get(msgId);
+            if (bubble == null) continue;
+
+            // Get raw content and type from stored maps
+            String rawContent = messageContentById.getOrDefault(msgId, "");
+            String msgType = messageTypeById.getOrDefault(msgId, "TEXT");
+
+            HBox item = new HBox(12);
+            item.setAlignment(Pos.CENTER_LEFT);
+            item.setPadding(new Insets(8, 12, 8, 12));
+            item.setStyle("-fx-background-color: #16213e; -fx-background-radius: 8px; -fx-cursor: hand;");
+            item.setOnMouseEntered(e -> item.setStyle("-fx-background-color: #2a2a5e; -fx-background-radius: 8px; -fx-cursor: hand;"));
+            item.setOnMouseExited(e -> item.setStyle("-fx-background-color: #16213e; -fx-background-radius: 8px; -fx-cursor: hand;"));
+
+            Node contentNode;
+            if ("IMAGE".equalsIgnoreCase(msgType) && !rawContent.isEmpty()) {
+                // Decode base64 image and show thumbnail
+                try {
+                    String base64Data = rawContent;
+                    if (rawContent.contains(",")) {
+                        base64Data = rawContent.substring(rawContent.indexOf(",") + 1);
+                    }
+                    byte[] imageBytes = Base64.getDecoder().decode(base64Data.trim());
+                    Image img = new Image(new ByteArrayInputStream(imageBytes));
+                    ImageView thumbView = new ImageView(img);
+                    thumbView.setPreserveRatio(true);
+                    thumbView.setFitWidth(80);
+                    thumbView.setFitHeight(80);
+                    javafx.scene.shape.Rectangle clip = new javafx.scene.shape.Rectangle(80, 80);
+                    clip.setArcWidth(10);
+                    clip.setArcHeight(10);
+                    thumbView.setClip(clip);
+                    
+                    HBox imageContainer = new HBox(8);
+                    imageContainer.setAlignment(Pos.CENTER_LEFT);
+                    Label imgLabel = new Label("\uD83D\uDDBC [Hình ảnh]");
+                    imgLabel.setStyle("-fx-text-fill: #aaaaaa; -fx-font-size: 13px;");
+                    imageContainer.getChildren().addAll(thumbView, imgLabel);
+                    contentNode = imageContainer;
+                } catch (Exception e) {
+                    Label errLabel = new Label("\uD83D\uDDBC [Hình ảnh]");
+                    errLabel.setStyle("-fx-text-fill: #888888; -fx-font-size: 13px;");
+                    contentNode = errLabel;
+                }
+            } else {
+                contentNode = EmojiManager.getInstance().renderMessagePreview(rawContent);
+            }
+            HBox.setHgrow(contentNode, Priority.ALWAYS);
+
+            item.getChildren().add(contentNode);
+
+            item.setOnMouseClicked(e -> {
+                dialog.close();
+                scrollToAndHighlightMessage(msgId);
+            });
+
+            listBox.getChildren().add(item);
+        }
+
+        ScrollPane scrollPane = new ScrollPane(listBox);
+        scrollPane.setFitToWidth(true);
+        scrollPane.setPrefHeight(Math.min(pinnedMsgIds.size() * 56, 350));
+        scrollPane.setStyle("-fx-background: #16213e; -fx-background-color: #16213e; -fx-border-color: #333; -fx-border-radius: 8px;");
+        scrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+
+        Button closeBtn = new Button("Đóng");
+        closeBtn.setStyle("-fx-background-color: #333; -fx-text-fill: white; -fx-font-size: 14px; "
+                + "-fx-padding: 10px 24px; -fx-background-radius: 8px; -fx-cursor: hand;");
+        closeBtn.setOnAction(e -> dialog.close());
+
+        HBox buttonRow = new HBox(12);
+        buttonRow.setAlignment(Pos.CENTER_RIGHT);
+        buttonRow.getChildren().add(closeBtn);
+
+        root.getChildren().addAll(titleLabel, scrollPane, buttonRow);
+
+        Scene scene = new Scene(root, 380, Math.min(pinnedMsgIds.size() * 60 + 120, 440));
+        dialog.setScene(scene);
+        dialog.showAndWait();
     }
 
     // ==================== FORWARD ====================
@@ -1533,6 +2156,9 @@ public class ChatView {
 
         // Render emoji content for the quote box preview
         String quoteContent = content != null ? content : "";
+        if (quoteContent.length() > 200 && !quoteContent.contains(" ") && !quoteContent.contains("\n")) {
+            quoteContent = "[Hình ảnh]";
+        }
         Node renderedContent = EmojiManager.getInstance().renderMessagePreview(quoteContent);
         quote.getChildren().addAll(userLabel, renderedContent);
 
@@ -1544,6 +2170,8 @@ public class ChatView {
                 openMessageFromSearch(currentConversationId, replyToId);
             }
         });
+
+        quoteBoxesByReplyToId.computeIfAbsent(replyToId, k -> new ArrayList<>()).add(quote);
 
         return quote;
     }
@@ -2194,6 +2822,10 @@ public class ChatView {
                     showToast("Đã thoát nhóm thành công!");
                     currentConversationId = -1;
                     messagesBox.getChildren().clear();
+                    messageContentById.clear();
+                    messageTypeById.clear();
+                    messagePinnedState.clear();
+                    if (pinnedMessagesBar != null) { pinnedMessagesBar.setVisible(false); pinnedMessagesBar.setManaged(false); }
                     if (headerChatName != null) headerChatName.setText("Chọn người để chat");
                     if (chatStatus != null) chatStatus.setText("Offline");
                     if (leaveGroupBtn != null) {
@@ -2283,6 +2915,7 @@ public class ChatView {
         Button attachBtn = new Button("+");
         attachBtn.setStyle("-fx-background-color: " + StyleConstants.ACCENT + "; -fx-text-fill: " + StyleConstants.TEXT_WHITE
                 + "; -fx-font-size: 20px; -fx-font-weight: bold; -fx-background-radius: 50%; -fx-min-width: 40px; -fx-min-height: 40px; -fx-cursor: hand;");
+        attachBtn.setOnAction(e -> browseAndSendImage());
 
         // Emoji picker button
         Button emojiBtn = new Button("😊");
@@ -2342,6 +2975,29 @@ public class ChatView {
         sendBtn.setOnAction(e -> sendMessage());
         messageInput.setOnAction(e -> sendMessage());
 
+        // Listen to Ctrl+V on messageInput to paste image or files
+        messageInput.setOnKeyPressed(e -> {
+            if (e.isControlDown() && e.getCode() == javafx.scene.input.KeyCode.V) {
+                javafx.scene.input.Clipboard clipboard = javafx.scene.input.Clipboard.getSystemClipboard();
+                if (clipboard.hasImage()) {
+                    Image img = clipboard.getImage();
+                    sendClipboardImage(img);
+                    e.consume();
+                } else if (clipboard.hasFiles()) {
+                    java.util.List<java.io.File> files = clipboard.getFiles();
+                    if (files != null && !files.isEmpty()) {
+                        java.io.File firstFile = files.get(0);
+                        String fileName = firstFile.getName().toLowerCase();
+                        if (fileName.endsWith(".png") || fileName.endsWith(".jpg") || fileName.endsWith(".jpeg")
+                                || fileName.endsWith(".gif") || fileName.endsWith(".bmp")) {
+                            sendImageFile(firstFile);
+                            e.consume();
+                        }
+                    }
+                }
+            }
+        });
+
         inputBar.getChildren().addAll(attachBtn, emojiBtn, messageInputStack, sendBtn);
 
         // Construct replyPreviewBar (hidden by default)
@@ -2386,7 +3042,43 @@ public class ChatView {
         cancelForwardBtn.setOnAction(e -> cancelForward());
         forwardPreviewBar.getChildren().addAll(forwardInfo, cancelForwardBtn);
 
-        panel.getChildren().addAll(chatHeader, messageSearchPanel, scrollMessages, typingLabel, replyPreviewBar, forwardPreviewBar, inputBar);
+        // Construct editPreviewBar (hidden by default)
+        editPreviewBar = new HBox(12);
+        editPreviewBar.setAlignment(Pos.CENTER_LEFT);
+        editPreviewBar.setPadding(new Insets(8, 24, 8, 24));
+        editPreviewBar.setStyle("-fx-background-color: #141026; -fx-border-color: " + StyleConstants.BORDER_COLOR + "; -fx-border-width: 1 0 0 0;");
+        editPreviewBar.setVisible(false);
+        editPreviewBar.setManaged(false);
+
+        VBox editInfo = new VBox(2);
+        Label editPreviewTitleLabel = new Label("Đang chỉnh sửa tin nhắn");
+        editPreviewTitleLabel.setStyle("-fx-font-weight: bold; -fx-text-fill: " + StyleConstants.ACCENT + "; -fx-font-size: 12px;");
+        editPreviewContentLabel = new Label("Nội dung tin nhắn");
+        editPreviewContentLabel.setStyle("-fx-text-fill: " + StyleConstants.TEXT_MUTED + "; -fx-font-size: 13px;");
+        editInfo.getChildren().addAll(editPreviewTitleLabel, editPreviewContentLabel);
+        HBox.setHgrow(editInfo, Priority.ALWAYS);
+
+        Button cancelEditBtn = new Button("✕");
+        cancelEditBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: " + StyleConstants.TEXT_MUTED + "; -fx-font-size: 14px; -fx-cursor: hand; -fx-padding: 4px;");
+        cancelEditBtn.setOnAction(e -> cancelEdit());
+        editPreviewBar.getChildren().addAll(editInfo, cancelEditBtn);
+
+        panel.getChildren().addAll(chatHeader, messageSearchPanel, scrollMessages, typingLabel, replyPreviewBar, forwardPreviewBar, editPreviewBar, inputBar);
+
+        // Pinned messages bar — shown between search panel and messages
+        pinnedMessagesLabel = new Label("");
+        pinnedMessagesLabel.setStyle("-fx-text-fill: " + StyleConstants.PIN_COLOR + "; -fx-font-size: 12px; -fx-font-weight: bold; -fx-cursor: hand;");
+        pinnedMessagesLabel.setOnMouseClicked(e -> showPinnedMessagesDialog());
+        pinnedMessagesBar = new HBox(pinnedMessagesLabel);
+        pinnedMessagesBar.setAlignment(Pos.CENTER_LEFT);
+        pinnedMessagesBar.setPadding(new Insets(6, 24, 6, 24));
+        pinnedMessagesBar.setStyle("-fx-background-color: #1a1a0a; -fx-border-color: " + StyleConstants.PIN_COLOR + "33; -fx-border-width: 0 0 1 0; -fx-cursor: hand;");
+        pinnedMessagesBar.setVisible(false);
+        pinnedMessagesBar.setManaged(false);
+        pinnedMessagesBar.setOnMouseClicked(e -> showPinnedMessagesDialog());
+        // Insert after messageSearchPanel (index 1)
+        panel.getChildren().add(1, pinnedMessagesBar);
+
         return panel;
     }
 
@@ -2435,6 +3127,29 @@ public class ChatView {
         Button passBtn = createProfileButton("Đổi mật khẩu", false);
         passBtn.setOnAction(e -> new ChangePasswordDialog(stage, controller).show());
 
+        // Pin policy toggle for group conversations
+        adminOnlyPinCheckBox = new javafx.scene.control.CheckBox("Chỉ quản trị viên mới được ghim tin nhắn");
+        adminOnlyPinCheckBox.setStyle("-fx-text-fill: " + StyleConstants.TEXT_MUTED + "; -fx-font-size: 12px;");
+        adminOnlyPinCheckBox.setSelected(false);
+        adminOnlyPinCheckBox.selectedProperty().addListener((obs, oldVal, newVal) -> {
+            if (currentConversationId > 0) {
+                controller.setPinPolicy(currentConversationId, newVal,
+                        result -> showToast(newVal ? "Đã bật chế độ ghim chỉ dành cho quản trị viên" : "Đã tắt chế độ ghim chỉ dành cho quản trị viên"),
+                        err -> {
+                            showToast("Lỗi: " + err);
+                            // Revert checkbox
+                            adminOnlyPinCheckBox.setSelected(!newVal);
+                        });
+            }
+        });
+
+        pinPolicyBox = new HBox(8);
+        pinPolicyBox.setAlignment(Pos.CENTER_LEFT);
+        pinPolicyBox.setPadding(new Insets(4, 0, 4, 0));
+        pinPolicyBox.getChildren().add(adminOnlyPinCheckBox);
+        pinPolicyBox.setVisible(false);
+        pinPolicyBox.setManaged(false);
+
         Region spacer = new Region();
         VBox.setVgrow(spacer, Priority.ALWAYS);
 
@@ -2446,7 +3161,7 @@ public class ChatView {
             stage.setScene(loginView.createScene());
         });
 
-        panel.getChildren().addAll(profileAvatarCircle, nameLabel, avatarBtn, nameBtn, passBtn, spacer, logoutBtn);
+        panel.getChildren().addAll(profileAvatarCircle, nameLabel, avatarBtn, nameBtn, passBtn, pinPolicyBox, spacer, logoutBtn);
         return panel;
     }
 
@@ -2681,6 +3396,89 @@ public class ChatView {
 
     public Scene createScene() {
         return new Scene(root, 1400, 800);
+    }
+
+    private void browseAndSendImage() {
+        if (currentConversationId <= 0 || !controller.getChatService().isConnected()) {
+            showToast("Vui lòng chọn một cuộc trò chuyện để gửi ảnh.");
+            return;
+        }
+
+        javafx.stage.FileChooser fileChooser = new javafx.stage.FileChooser();
+        fileChooser.setTitle("Chọn hình ảnh");
+        fileChooser.getExtensionFilters().addAll(
+                new javafx.stage.FileChooser.ExtensionFilter("Image Files", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.bmp")
+        );
+        java.io.File selectedFile = fileChooser.showOpenDialog(stage);
+        if (selectedFile != null) {
+            sendImageFile(selectedFile);
+        }
+    }
+
+    private void sendImageFile(java.io.File file) {
+        CompletableFuture.runAsync(() -> {
+            try {
+                long fileSizeInBytes = file.length();
+                long fileSizeInMb = fileSizeInBytes / (1024 * 1024);
+                if (fileSizeInMb > 4) {
+                    Platform.runLater(() -> showToast("Dung lượng ảnh tối đa là 4MB."));
+                    return;
+                }
+
+                byte[] fileContent = java.nio.file.Files.readAllBytes(file.toPath());
+                String base64Content = Base64.getEncoder().encodeToString(fileContent);
+
+                Platform.runLater(() -> {
+                    Long replyId = activeReplyToId;
+                    Long forwardId = activeForwardFromId;
+                    controller.sendMessage(currentConversationId, base64Content, "IMAGE", replyId, forwardId,
+                            err -> showToast("Gửi hình ảnh thất bại: " + err));
+                    cancelReply();
+                    cancelForward();
+                });
+            } catch (java.io.IOException e) {
+                Platform.runLater(() -> showToast("Không thể đọc file ảnh: " + e.getMessage()));
+            }
+        });
+    }
+
+    private void sendClipboardImage(Image image) {
+        if (currentConversationId <= 0 || !controller.getChatService().isConnected()) {
+            showToast("Vui lòng chọn một cuộc trò chuyện để gửi ảnh.");
+            return;
+        }
+
+        CompletableFuture.runAsync(() -> {
+            try {
+                java.awt.image.BufferedImage bufferedImage = javafx.embed.swing.SwingFXUtils.fromFXImage(image, null);
+                if (bufferedImage == null) {
+                    Platform.runLater(() -> showToast("Không thể đọc ảnh từ clipboard."));
+                    return;
+                }
+
+                java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+                javax.imageio.ImageIO.write(bufferedImage, "png", baos);
+                byte[] bytes = baos.toByteArray();
+
+                if (bytes.length > 4 * 1024 * 1024) {
+                    Platform.runLater(() -> showToast("Dung lượng ảnh tối đa là 4MB."));
+                    return;
+                }
+
+                String base64Content = Base64.getEncoder().encodeToString(bytes);
+
+                Platform.runLater(() -> {
+                    Long replyId = activeReplyToId;
+                    Long forwardId = activeForwardFromId;
+                    controller.sendMessage(currentConversationId, base64Content, "IMAGE", replyId, forwardId,
+                            err -> showToast("Gửi hình ảnh thất bại: " + err));
+                    cancelReply();
+                    cancelForward();
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> showToast("Gửi ảnh từ clipboard thất bại: " + e.getMessage()));
+            }
+        });
     }
 
     public static class ReaderInfo {

@@ -25,8 +25,16 @@ if %ERRORLEVEL% NEQ 0 (
 echo.
 echo [2/2] Launching JavaFX Client...
 echo ===================================================
-echo.
-echo [Mode] Connect to localhost:3000 (default)
+:: Auto-detect PORT from server .env, fallback to 3000
+if not defined TCP_PORT (
+    set "TCP_PORT=3000"
+    if exist "%~dp0..\Code\Server\.env" (
+        for /f "tokens=2 delims==" %%a in ('findstr /b "PORT=" "%~dp0..\Code\Server\.env" 2^>nul') do set "TCP_PORT=%%a"
+    )
+)
+if not defined TCP_HOST set "TCP_HOST=127.0.0.1"
+
+echo [Mode] Connect to %TCP_HOST%:%TCP_PORT% (default)
 echo        Set TCP_HOST / TCP_PORT env vars to override.
 echo.
 call mvn javafx:run
