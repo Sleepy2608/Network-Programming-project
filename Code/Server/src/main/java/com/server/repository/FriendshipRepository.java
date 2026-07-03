@@ -1,12 +1,17 @@
 package com.server.repository;
 
-import com.google.gson.JsonArray;
-import com.google.gson.JsonObject;
-import com.server.config.Database;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Timestamp;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.sql.*;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
+import com.server.config.Database;
 
 /**
  * Repository for the `friendships` table.
@@ -279,7 +284,9 @@ public class FriendshipRepository {
                 }
             }
         } catch (SQLException e) {
-            logger.error("getPendingRequests error userId={}: {}", userId, e.getMessage(), e);
+            String sqlError = e.getMessage();
+            logger.error("getPendingRequests error userId={}: {}", userId, sqlError, e);
+            throw new RuntimeException("Database error in getPendingRequests for userId=" + userId + ": " + sqlError, e);
         }
         return arr;
     }
@@ -313,7 +320,9 @@ public class FriendshipRepository {
                 }
             }
         } catch (SQLException e) {
-            logger.error("getSentRequests error userId={}: {}", userId, e.getMessage(), e);
+            String sqlError = e.getMessage();
+            logger.error("getSentRequests error userId={}: {}", userId, sqlError, e);
+            throw new RuntimeException("Database error in getSentRequests for userId=" + userId + ": " + sqlError, e);
         }
         return arr;
     }

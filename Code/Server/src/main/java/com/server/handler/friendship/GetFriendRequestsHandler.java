@@ -1,11 +1,12 @@
 package com.server.handler.friendship;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.server.service.FriendshipService;
 import com.server.tcp.ClientConnection;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Handles GET_FRIEND_REQUESTS action.
@@ -39,7 +40,7 @@ public class GetFriendRequestsHandler {
         } catch (Exception e) {
             logger.error("[GET_FRIEND_REQUESTS ERROR] {}", e.getMessage(), e);
             response.addProperty("status", "error");
-            response.addProperty("message", "Internal Server Error");
+            response.addProperty("message", e.getMessage());
         }
         return response;
     }
