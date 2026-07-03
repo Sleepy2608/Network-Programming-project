@@ -44,6 +44,10 @@ public class FriendshipService {
         return repo.getFriendshipStatus(viewerId, otherId);
     }
 
+    public boolean isBlockedBetween(long userId1, long userId2) {
+        return repo.isBlockedBetween(userId1, userId2);
+    }
+
     public JsonArray getFriendList(long userId) {
         return repo.getFriendList(userId);
     }

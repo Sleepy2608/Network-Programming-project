@@ -221,6 +221,28 @@ public class FriendshipRepository {
         }
     }
 
+    /**
+     * Kiem tra xem giua hai user co bi block hay khong (bat ke ai block ai).
+     * Tra ve true neu mot trong hai ben da block.
+     */
+    public boolean isBlockedBetween(long userId1, long userId2) {
+        long u1 = minId(userId1, userId2);
+        long u2 = maxId(userId1, userId2);
+        try (Connection conn = Database.getConnection()) {
+            String sql = "SELECT 1 FROM friendships WHERE user1_id=? AND user2_id=? AND status='BLOCKED'";
+            try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                ps.setLong(1, u1);
+                ps.setLong(2, u2);
+                try (ResultSet rs = ps.executeQuery()) {
+                    return rs.next();
+                }
+            }
+        } catch (SQLException e) {
+            logger.error("isBlockedBetween error userId1={} userId2={}: {}", userId1, userId2, e.getMessage(), e);
+            return false;
+        }
+    }
+
     // Read Operations
     /**
      * Lay trang thai quan he giua hai user.

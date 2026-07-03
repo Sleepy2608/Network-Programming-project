@@ -37,7 +37,7 @@ public class UnblockUserHandler {
             logger.info("[UNBLOCK_USER] userId={} targetUserId={} ok={}", userId, targetUserId, ok);
 
             response.addProperty("status", ok ? "success" : "error");
-            response.addProperty("message", ok ? "Đã gỡ chặn người dùng" : "Không tìm thấy trạng thái chặn để gỡ");
+            response.addProperty("message", ok ? "Đã gỡ chặn người dùng" : "Không thể tự gỡ chặn");
         } catch (Exception e) {
             logger.error("[UNBLOCK_USER ERROR] {}", e.getMessage(), e);
             response.addProperty("status", "error");

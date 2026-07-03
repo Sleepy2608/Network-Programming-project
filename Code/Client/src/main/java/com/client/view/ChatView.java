@@ -165,6 +165,10 @@ public class ChatView {
     private int pendingRequestCount = 0;
     private TextField searchField;
 
+    // Block state
+    private HBox inputBar;
+    private Label blockedOverlay;
+
     // Pagination
     private long currentConversationId = -1;
     private long currentPeerId = -1;
@@ -678,6 +682,70 @@ public class ChatView {
         // Mark all messages in this conversation as SEEN for the current user
         // This triggers the server to broadcast MESSAGE_STATUS_EVENT to the sender
         controller.markAllMessagesSeen(conversationId);
+
+        // Check block state for private conversations
+        Long blockCheckPeerId = peerIdByConversationId.get(conversationId);
+        if (blockCheckPeerId != null) {
+            checkAndUpdateBlockedState(blockCheckPeerId, name);
+        } else {
+            // Group conversation — always show input bar
+            if (inputBar != null) { inputBar.setVisible(true); inputBar.setManaged(true); }
+            if (blockedOverlay != null) { blockedOverlay.setVisible(false); blockedOverlay.setManaged(false); }
+        }
+    }
+
+    /**
+     * Check block state between current user and peer, then show/hide the blocked overlay accordingly.
+     */
+    private void checkAndUpdateBlockedState(long peerId, String peerName) {
+        controller.getFriendshipStatus(peerId,
+                status -> {
+                    if ("BLOCKED".equals(status)) {
+                        showBlockedOverlay(peerName);
+                    } else {
+                        hideBlockedOverlay();
+                    }
+                },
+                err -> {
+                    // On error, default to showing input bar
+                    hideBlockedOverlay();
+                });
+    }
+
+    private void showBlockedOverlay(String peerName) {
+        if (blockedOverlay != null) {
+            blockedOverlay.setText("🚫 Không thể nhắn tin được với " + peerName);
+            blockedOverlay.setVisible(true);
+            blockedOverlay.setManaged(true);
+        }
+        if (inputBar != null) {
+            inputBar.setVisible(false);
+            inputBar.setManaged(false);
+        }
+    }
+
+    private void hideBlockedOverlay() {
+        if (blockedOverlay != null) {
+            blockedOverlay.setVisible(false);
+            blockedOverlay.setManaged(false);
+        }
+        if (inputBar != null) {
+            inputBar.setVisible(true);
+            inputBar.setManaged(true);
+        }
+    }
+
+    /**
+     * Refresh blocked state for the currently open conversation (if it's a private chat).
+     * Called after block/unblock actions.
+     */
+    private void refreshBlockedStateForCurrentConversation() {
+        if (currentConversationId <= 0) return;
+        Long peerId = peerIdByConversationId.get(currentConversationId);
+        if (peerId != null) {
+            String peerName = conversationDisplayNames.getOrDefault(currentConversationId, "người dùng này");
+            checkAndUpdateBlockedState(peerId, peerName);
+        }
     }
 
     private void loadPendingRequestCount() {
@@ -1637,7 +1705,17 @@ public class ChatView {
                 Long replyId = activeReplyToId;
                 Long forwardId = activeForwardFromId;
                 controller.sendMessage(currentConversationId, text, replyId, forwardId,
-                        err -> showToast("Gửi tin nhắn thất bại: " + err));
+                        err -> {
+                            showToast("Gửi tin nhắn thất bại: " + err);
+                            // If blocked, update the UI to show blocked overlay
+                            if (err != null && err.startsWith("Không thể nhắn tin được với")) {
+                                Long peerId = peerIdByConversationId.get(currentConversationId);
+                                if (peerId != null) {
+                                    String peerName = conversationDisplayNames.getOrDefault(currentConversationId, "người dùng này");
+                                    showBlockedOverlay(peerName);
+                                }
+                            }
+                        });
                 messageInput.clear();
                 cancelReply();
                 cancelForward();
@@ -2568,7 +2646,7 @@ public class ChatView {
                 MenuItem block = new MenuItem("🚫 Chặn");
                 block.setStyle(itemDanger);
                 block.setOnAction(e -> controller.blockUser(peerId,
-                        msg -> showToast(msg),
+                        msg -> { showToast(msg); refreshBlockedStateForCurrentConversation(); },
                         err -> showToast(err)));
 
                 menu.getItems().addAll(addFriend, new SeparatorMenuItem(), block);
@@ -2584,7 +2662,7 @@ public class ChatView {
                 MenuItem block = new MenuItem("🚫 Chặn");
                 block.setStyle(itemDanger);
                 block.setOnAction(e -> controller.blockUser(peerId,
-                        msg -> showToast(msg),
+                        msg -> { showToast(msg); refreshBlockedStateForCurrentConversation(); },
                         err -> showToast(err)));
 
                 menu.getItems().addAll(cancel, new SeparatorMenuItem(), block);
@@ -2606,7 +2684,7 @@ public class ChatView {
                 MenuItem block = new MenuItem("🚫 Chặn");
                 block.setStyle(itemDanger);
                 block.setOnAction(e -> controller.blockUser(peerId,
-                        msg -> showToast(msg),
+                        msg -> { showToast(msg); refreshBlockedStateForCurrentConversation(); },
                         err -> showToast(err)));
 
                 menu.getItems().addAll(accept, reject, new SeparatorMenuItem(), block);
@@ -2622,7 +2700,7 @@ public class ChatView {
                 MenuItem block = new MenuItem("🚫 Chặn");
                 block.setStyle(itemDanger);
                 block.setOnAction(e -> controller.blockUser(peerId,
-                        msg -> showToast(msg),
+                        msg -> { showToast(msg); refreshBlockedStateForCurrentConversation(); },
                         err -> showToast(err)));
 
                 menu.getItems().addAll(unfriend, new SeparatorMenuItem(), block);
@@ -2632,7 +2710,7 @@ public class ChatView {
                 MenuItem unblock = new MenuItem("🔓 Gỡ chặn");
                 unblock.setStyle(itemAccent);
                 unblock.setOnAction(e -> controller.unblockUser(peerId,
-                        msg -> showToast(msg),
+                        msg -> { showToast(msg); refreshBlockedStateForCurrentConversation(); },
                         err -> showToast(err)));
 
                 menu.getItems().add(unblock);
@@ -2944,7 +3022,7 @@ public class ChatView {
         friendActionBtn.setOnAction(e -> showFriendshipContextMenu(friendActionBtn));
 
         actions.getChildren().addAll(messageSearchField, messageSearchButton,
-                createIconButton("Call"), createIconButton("Video"), friendActionBtn, leaveGroupBtn);
+                friendActionBtn, leaveGroupBtn);
         chatHeader.getChildren().addAll(headerAvatar, headerInfo, spacer, actions);
 
         // Search results panel
@@ -3007,7 +3085,7 @@ public class ChatView {
         typingLabel.setStyle("-fx-font-size: 12px; -fx-text-fill: " + StyleConstants.TEXT_MUTED + "; -fx-font-style: italic;");
 
         // Input bar
-        HBox inputBar = new HBox(12);
+        inputBar = new HBox(12);
         inputBar.setAlignment(Pos.CENTER);
         inputBar.setPadding(new Insets(16, 24, 16, 24));
         inputBar.setStyle("-fx-background-color: " + StyleConstants.PANEL_DARK + "; -fx-border-color: " + StyleConstants.BORDER_COLOR + "; -fx-border-width: 1 0 0 0;");
@@ -3163,7 +3241,18 @@ public class ChatView {
         cancelEditBtn.setOnAction(e -> cancelEdit());
         editPreviewBar.getChildren().addAll(editInfo, cancelEditBtn);
 
-        panel.getChildren().addAll(chatHeader, messageSearchPanel, scrollMessages, typingLabel, replyPreviewBar, forwardPreviewBar, editPreviewBar, inputBar);
+        // Blocked overlay — shown instead of inputBar when conversation is blocked
+        blockedOverlay = new Label();
+        blockedOverlay.setAlignment(Pos.CENTER);
+        blockedOverlay.setMaxWidth(Double.MAX_VALUE);
+        blockedOverlay.setPadding(new Insets(16, 24, 16, 24));
+        blockedOverlay.setStyle("-fx-background-color: " + StyleConstants.PANEL_DARK
+                + "; -fx-border-color: " + StyleConstants.BORDER_COLOR
+                + "; -fx-border-width: 1 0 0 0; -fx-text-fill: #ff6b6b; -fx-font-size: 14px; -fx-font-weight: bold; -fx-alignment: center;");
+        blockedOverlay.setVisible(false);
+        blockedOverlay.setManaged(false);
+
+        panel.getChildren().addAll(chatHeader, messageSearchPanel, scrollMessages, typingLabel, replyPreviewBar, forwardPreviewBar, editPreviewBar, blockedOverlay, inputBar);
 
         // Pinned messages bar — shown between search panel and messages
         pinnedMessagesLabel = new Label("");
