@@ -284,8 +284,9 @@ public class FriendshipRepository {
                 }
             }
         } catch (SQLException e) {
-            logger.error("getPendingRequests error userId={}: {}", userId, e.getMessage(), e);
-            throw new RuntimeException("Database error in getPendingRequests for userId=" + userId, e);
+            String sqlError = e.getMessage();
+            logger.error("getPendingRequests error userId={}: {}", userId, sqlError, e);
+            throw new RuntimeException("Database error in getPendingRequests for userId=" + userId + ": " + sqlError, e);
         }
         return arr;
     }
@@ -319,8 +320,9 @@ public class FriendshipRepository {
                 }
             }
         } catch (SQLException e) {
-            logger.error("getSentRequests error userId={}: {}", userId, e.getMessage(), e);
-            throw new RuntimeException("Database error in getSentRequests for userId=" + userId, e);
+            String sqlError = e.getMessage();
+            logger.error("getSentRequests error userId={}: {}", userId, sqlError, e);
+            throw new RuntimeException("Database error in getSentRequests for userId=" + userId + ": " + sqlError, e);
         }
         return arr;
     }

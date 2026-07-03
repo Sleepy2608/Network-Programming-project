@@ -102,31 +102,46 @@ public class Database {
     }
 
     public static void runMigrations() {
-        // Migration 0: Create friendships table if not exists
-        String checkFriendshipsTable = "SHOW TABLES LIKE 'friendships'";
-        String createFriendshipsTable = "CREATE TABLE IF NOT EXISTS friendships (\n" +
-                "    user1_id BIGINT NOT NULL,\n" +
-                "    user2_id BIGINT NOT NULL,\n" +
-                "    status VARCHAR(20) DEFAULT 'PENDING' COMMENT 'PENDING, ACCEPTED, BLOCKED',\n" +
-                "    action_user_id BIGINT COMMENT 'User ID who initiated the last action',\n" +
-                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n" +
-                "    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,\n" +
-                "    PRIMARY KEY (user1_id, user2_id),\n" +
-                "    CONSTRAINT ck_user_order CHECK (user1_id < user2_id),\n" +
-                "    INDEX idx_status (status),\n" +
-                "    INDEX idx_action_user (action_user_id)\n" +
-                ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
+        // Migration 0: Create friendships table + fix missing columns
+        try (Connection conn = getConnection(); Statement stmt = conn.createStatement()) {
+            // Check if table exists
+            ResultSet rs = stmt.executeQuery("SHOW TABLES LIKE 'friendships'");
+            boolean tableExists = rs.next();
+            rs.close();
 
-        try (Connection conn = getConnection();
-             Statement stmt = conn.createStatement();
-             ResultSet rs = stmt.executeQuery(checkFriendshipsTable)) {
-
-            if (!rs.next()) {
-                logger.info("Table 'friendships' not found. Running migration to create it...");
-                stmt.executeUpdate(createFriendshipsTable);
-                logger.info("Database migration completed: created 'friendships' table.");
+            if (!tableExists) {
+                logger.info("Table 'friendships' not found. Creating it...");
+                stmt.executeUpdate("CREATE TABLE friendships (\n" +
+                    "    user1_id BIGINT NOT NULL,\n" +
+                    "    user2_id BIGINT NOT NULL,\n" +
+                    "    status VARCHAR(20) DEFAULT 'PENDING',\n" +
+                    "    action_user_id BIGINT,\n" +
+                    "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n" +
+                    "    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,\n" +
+                    "    PRIMARY KEY (user1_id, user2_id),\n" +
+                    "    CONSTRAINT ck_user_order CHECK (user1_id < user2_id),\n" +
+                    "    INDEX idx_status (status),\n" +
+                    "    INDEX idx_action_user (action_user_id)\n" +
+                    ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+                logger.info("Created 'friendships' table.");
             } else {
-                logger.info("Database schema is up to date. Table 'friendships' already exists.");
+                logger.info("Table 'friendships' exists. Checking for missing columns...");
+                // Add missing columns if the table was created with an old schema
+                String[] neededColumns = {
+                    "action_user_id BIGINT DEFAULT NULL",
+                    "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+                    "updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"
+                };
+                for (String colDef : neededColumns) {
+                    String colName = colDef.split(" ")[0];
+                    ResultSet colRs = stmt.executeQuery("SHOW COLUMNS FROM friendships LIKE '" + colName + "'");
+                    if (!colRs.next()) {
+                        logger.info("Column '{}' missing from friendships. Adding it...", colName);
+                        stmt.executeUpdate("ALTER TABLE friendships ADD COLUMN " + colDef);
+                        logger.info("Added column '{}' to friendships.", colName);
+                    }
+                    colRs.close();
+                }
             }
         } catch (SQLException e) {
             logger.error("Database migration (friendships table) failed: {}", e.getMessage(), e);
