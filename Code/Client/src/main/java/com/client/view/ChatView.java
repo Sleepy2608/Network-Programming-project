@@ -221,6 +221,13 @@ public class ChatView {
 
         setupTcpCallbacks();
         loadConversations();
+        loadPendingRequestCount();
+
+        // Periodically refresh pending request count every 60s
+        scheduler.scheduleAtFixedRate(
+            () -> Platform.runLater(this::loadPendingRequestCount),
+            60, 60, TimeUnit.SECONDS
+        );
     }
 
     public ChatView(Stage stage) {
@@ -690,6 +697,22 @@ public class ChatView {
                 },
                 err -> { /* silently ignore */ }
         );
+    }
+
+    private void refreshSearchResults(String query) {
+        controller.searchUsers(query, users -> {
+            Platform.runLater(() -> {
+                contactList.getChildren().clear();
+                contactLastMsgLabels.clear();
+                for (JsonElement element : users) {
+                    JsonObject user = element.getAsJsonObject();
+                    long uId = user.get("userId").getAsLong();
+                    String username = user.get("username").getAsString();
+                    String friendshipStatus = user.has("friendshipStatus") ? user.get("friendshipStatus").getAsString() : "NONE";
+                    addSearchResultContact(uId, username, friendshipStatus, searchField);
+                }
+            });
+        }, errMsg -> System.err.println("[ChatView] Refresh search failed: " + errMsg));
     }
 
     private void loadConversations() {
@@ -2527,12 +2550,19 @@ public class ChatView {
             return;
         }
 
+        Runnable refreshUi = () -> {
+            String q = searchField.getText().trim();
+            if (!q.isEmpty()) refreshSearchResults(q);
+            loadPendingRequestCount();
+            loadConversations();
+        };
+
         switch (status) {
             case "NONE": {
                 MenuItem addFriend = new MenuItem("➕ Kết bạn");
                 addFriend.setStyle(itemAccent);
                 addFriend.setOnAction(e -> controller.sendFriendRequest(peerId,
-                        msg -> showToast(msg),
+                        msg -> { showToast(msg); refreshUi.run(); },
                         err -> showToast(err)));
 
                 MenuItem block = new MenuItem("🚫 Chặn");
@@ -2548,7 +2578,7 @@ public class ChatView {
                 MenuItem cancel = new MenuItem("↩ Hủy lời mời đã gửi");
                 cancel.setStyle(itemNormal);
                 cancel.setOnAction(e -> controller.cancelFriendRequest(peerId,
-                        msg -> showToast(msg),
+                        msg -> { showToast(msg); refreshUi.run(); },
                         err -> showToast(err)));
 
                 MenuItem block = new MenuItem("🚫 Chặn");
@@ -2564,13 +2594,13 @@ public class ChatView {
                 MenuItem accept = new MenuItem("✅ Chấp nhận lời mời");
                 accept.setStyle(itemAccent);
                 accept.setOnAction(e -> controller.respondFriendRequest(peerId, "ACCEPTED",
-                        msg -> showToast(msg),
+                        msg -> { showToast(msg); refreshUi.run(); },
                         err -> showToast(err)));
 
                 MenuItem reject = new MenuItem("✖ Từ chối lời mời");
                 reject.setStyle(itemNormal);
                 reject.setOnAction(e -> controller.respondFriendRequest(peerId, "REJECTED",
-                        msg -> showToast(msg),
+                        msg -> { showToast(msg); refreshUi.run(); },
                         err -> showToast(err)));
 
                 MenuItem block = new MenuItem("🚫 Chặn");
@@ -2766,7 +2796,15 @@ public class ChatView {
             addFriendBtn.setOnAction(e -> {
                 e.consume();
                 controller.sendFriendRequest(uId,
-                    msg -> showToast(msg),
+                    msg -> {
+                        showToast(msg);
+                        // Refresh search results to update button state
+                        String query = searchField.getText().trim();
+                        if (!query.isEmpty()) {
+                            refreshSearchResults(query);
+                        }
+                        loadPendingRequestCount();
+                    },
                     err -> showToast(err));
             });
             contact.getChildren().add(addFriendBtn);
@@ -2776,7 +2814,14 @@ public class ChatView {
             cancelBtn.setOnAction(e -> {
                 e.consume();
                 controller.cancelFriendRequest(uId,
-                    msg -> showToast(msg),
+                    msg -> {
+                        showToast(msg);
+                        String query = searchField.getText().trim();
+                        if (!query.isEmpty()) {
+                            refreshSearchResults(query);
+                        }
+                        loadPendingRequestCount();
+                    },
                     err -> showToast(err));
             });
             contact.getChildren().add(cancelBtn);
@@ -2788,7 +2833,15 @@ public class ChatView {
             acceptBtn.setOnAction(e -> {
                 e.consume();
                 controller.respondFriendRequest(uId, "ACCEPTED",
-                    msg -> showToast(msg),
+                    msg -> {
+                        showToast(msg);
+                        String query = searchField.getText().trim();
+                        if (!query.isEmpty()) {
+                            refreshSearchResults(query);
+                        }
+                        loadPendingRequestCount();
+                        loadConversations();
+                    },
                     err -> showToast(err));
             });
             contact.getChildren().add(acceptBtn);

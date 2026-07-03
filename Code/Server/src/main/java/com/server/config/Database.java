@@ -102,6 +102,36 @@ public class Database {
     }
 
     public static void runMigrations() {
+        // Migration 0: Create friendships table if not exists
+        String checkFriendshipsTable = "SHOW TABLES LIKE 'friendships'";
+        String createFriendshipsTable = "CREATE TABLE IF NOT EXISTS friendships (\n" +
+                "    user1_id BIGINT NOT NULL,\n" +
+                "    user2_id BIGINT NOT NULL,\n" +
+                "    status VARCHAR(20) DEFAULT 'PENDING' COMMENT 'PENDING, ACCEPTED, BLOCKED',\n" +
+                "    action_user_id BIGINT COMMENT 'User ID who initiated the last action',\n" +
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n" +
+                "    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,\n" +
+                "    PRIMARY KEY (user1_id, user2_id),\n" +
+                "    CONSTRAINT ck_user_order CHECK (user1_id < user2_id),\n" +
+                "    INDEX idx_status (status),\n" +
+                "    INDEX idx_action_user (action_user_id)\n" +
+                ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
+
+        try (Connection conn = getConnection();
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(checkFriendshipsTable)) {
+
+            if (!rs.next()) {
+                logger.info("Table 'friendships' not found. Running migration to create it...");
+                stmt.executeUpdate(createFriendshipsTable);
+                logger.info("Database migration completed: created 'friendships' table.");
+            } else {
+                logger.info("Database schema is up to date. Table 'friendships' already exists.");
+            }
+        } catch (SQLException e) {
+            logger.error("Database migration (friendships table) failed: {}", e.getMessage(), e);
+        }
+
         // Migration 1: reply_to_message_id
         String checkReplyColumn = "SHOW COLUMNS FROM messages LIKE 'reply_to_message_id'";
         String addReplyColumn = "ALTER TABLE messages ADD COLUMN reply_to_message_id BIGINT DEFAULT NULL, " +
