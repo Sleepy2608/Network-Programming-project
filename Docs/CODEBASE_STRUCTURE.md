@@ -1,8 +1,8 @@
-# Network Programming Project - Java Codebase Structure
+# SinChat Codebase Structure
 
-**Date:** May 18, 2026  
-**Project Name:** SinChat (Network Chat Application)  
-**Architecture:** Client-Server with TCP/JSON protocol and Database backend
+**Project:** SinChat (Real-Time Chat Application)
+**Architecture:** Client-Server with TCP/JSON protocol and MySQL database
+**Java Version:** 25
 
 ---
 
@@ -13,29 +13,36 @@
 4. [Database Schema](#database-schema)
 5. [Message Flow](#message-flow)
 6. [Key Design Patterns](#key-design-patterns)
+7. [File Count Summary](#file-count-summary)
 
 ---
 
 ## PROJECT ARCHITECTURE OVERVIEW
 
 ### Technology Stack
-- **Server:** Java with Maven, TCP Sockets, JDBC with HikariCP connection pooling
-- **Client:** Java with JavaFX (GUI), TCP Socket client
-- **Database:** MySQL 5.7
-- **Build:** Maven (pom.xml)
-- **Containerization:** Docker
-- **JSON:** Google Gson library
-- **Security:** BCrypt for password hashing
-- **Logging:** SLF4J
+| Component | Technology | Version |
+|---|---|---|
+| **Runtime** | Java JDK | 25 |
+| **Server Networking** | `java.net.ServerSocket` + Virtual Threads | JDK built-in |
+| **Client GUI** | JavaFX | 25 |
+| **Database** | MySQL | 8.x |
+| **Connection Pool** | HikariCP | 5.1.0 |
+| **JSON** | Gson | 2.10.1 |
+| **Password Hashing** | jBCrypt | 0.4 |
+| **Configuration** | dotenv-java | 3.0.0 |
+| **Logging** | SLF4J + slf4j-simple | 2.0.13 |
+| **Build** | Maven | 3.x |
+| **Container** | Docker (multi-stage) | — |
+| **Testing** | JUnit Jupiter + Mockito | 5.10.2 / 5.17.0 |
 
 ### High-Level Flow
 ```
-Client (JavaFX) 
-    ↓ (JSON over TCP Socket)
-    ↓ Port 3000
-Server (Main.java → TcpServer)
-    ↓ (Routes to Handlers)
-    ↓ (Services → Repositories → Database)
+Client (JavaFX Desktop App)
+    ↓ TCP Socket (JSON lines, port 3000)
+    ↓ LAN Discovery (port 9999)
+Server (Virtual Threads)
+    ↓ Router → 36 action types → 30 handlers
+    ↓ Services → Repositories → HikariCP
 Database (MySQL)
 ```
 
@@ -43,210 +50,210 @@ Database (MySQL)
 
 ## SERVER STRUCTURE
 
-### Location
+### Directory Tree
 ```
 Code/Server/
+├── pom.xml
+├── Dockerfile
+├── .env
 ├── src/main/java/com/server/
-│   ├── Main.java
-│   ├── ProfileHandler.java
+│   ├── Main.java                          # Entry point
+│   ├── ProfileHandler.java                # Profile get/update
 │   ├── config/
-│   ├── handler/
-│   ├── model/
-│   ├── repository/
-│   ├── service/
-│   ├── tcp/
-│   └── websocket/
+│   │   └── Database.java                  # HikariCP pool + auto-migrations
+│   ├── model/                             # 8 files
+│   │   ├── User.java
+│   │   ├── Message.java                   # Enum: TEXT/IMAGE/VIDEO/VOICE/FILE/SYSTEM
+│   │   ├── MessageStatus.java             # Enum: SENT/DELIVERED/SEEN
+│   │   ├── MessageSearchResult.java
+│   │   ├── Friendship.java                # Enum: PENDING/ACCEPTED/BLOCKED
+│   │   ├── Conversation.java              # Enum: PRIVATE/GROUP
+│   │   ├── ChangeAvatar.java
+│   │   └── Attachment.java
+│   ├── repository/                        # 5 files
+│   │   ├── UserRepository.java
+│   │   ├── MessageRepository.java
+│   │   ├── MessageStatusRepository.java
+│   │   ├── FriendshipRepository.java
+│   │   └── ConversationRepository.java
+│   ├── service/                           # 6 files
+│   │   ├── AuthService.java               # Login, register, OTP, change password
+│   │   ├── MessageService.java            # Send, get, edit, delete, search
+│   │   ├── ConversationService.java       # Private/group CRUD, member mgmt
+│   │   ├── FriendshipService.java         # Friend requests, block/unblock
+│   │   ├── AvatarService.java             # Base64 decode, resize, BLOB storage
+│   │   └── UserNameService.java           # Display name update
+│   ├── handler/                           # 30 files
+│   │   ├── TypingHandler.java
+│   │   ├── PingHandler.java
+│   │   ├── JoinHandler.java
+│   │   ├── auth/                          # 4 files
+│   │   │   ├── LoginHandler.java          # Rate limiting: 5 fails → 60s lockout
+│   │   │   ├── RegisterHandler.java
+│   │   │   ├── ForgotPasswordHandler.java # 6-digit OTP, 5-min TTL, timing-attack
+│   │   │   └── ChangePasswordHandler.java
+│   │   ├── message/                       # 14 files
+│   │   │   ├── SendMessageHandler.java
+│   │   │   ├── GetMessagesHandler.java
+│   │   │   ├── GetConversationsHandler.java
+│   │   │   ├── ConversationHandler.java
+│   │   │   ├── CreateGroupHandler.java
+│   │   │   ├── GroupManagementHandler.java
+│   │   │   ├── LeaveGroupHandler.java
+│   │   │   ├── EditMessageHandler.java
+│   │   │   ├── DeleteMessageHandler.java
+│   │   │   ├── SearchMessagesHandler.java
+│   │   │   ├── SearchUserHandler.java
+│   │   │   ├── PinMessageHandler.java
+│   │   │   ├── UnpinMessageHandler.java
+│   │   │   ├── SetPinPolicyHandler.java
+│   │   │   └── UpdateMessageStatusHandler.java
+│   │   ├── friendship/                    # 8 files
+│   │   │   ├── SendFriendRequestHandler.java
+│   │   │   ├── RespondFriendRequestHandler.java
+│   │   │   ├── GetFriendsHandler.java
+│   │   │   ├── GetFriendRequestsHandler.java
+│   │   │   ├── GetFriendshipStatusHandler.java
+│   │   │   ├── UnfriendHandler.java
+│   │   │   ├── BlockUserHandler.java
+│   │   │   └── UnblockUserHandler.java
+│   │   ├── changeavatar/
+│   │   │   └── AvatarHandler.java
+│   │   ├── avatar/
+│   │   │   └── GetAvatarHandler.java
+│   │   └── changeName/
+│   │       └── NameHandler.java
+│   └── tcp/                               # 9 files
+│       ├── TcpServer.java                 # Virtual thread acceptor + lifecycle
+│       ├── ClientConnection.java          # Per-client read loop + dispatch
+│       ├── Router.java                    # Static dispatch on ~36 actions
+│       ├── TcpConnectionManager.java      # userId ↔ Set<ClientConnection>
+│       ├── PresenceService.java           # Online/offline broadcast
+│       ├── LanDiscoveryBroadcaster.java   # Port 9999 discovery
+│       ├── IdleConnectionSweeper.java     # 5s interval, 60s timeout
+│       ├── TcpServerSocketFactory.java    # Plain/TLS socket factory
+│       └── Connection.java                # Abstract base
 └── src/test/java/com/server/
+    ├── handler/       # Handler unit tests
+    ├── service/       # Service unit tests
+    ├── model/         # Model validation tests
+    └── integration/   # End-to-end TCP integration tests
 ```
 
-### Main Entry Point
-
-**[Main.java](../Code/Server/src/main/java/com/server/Main.java)**
-- **Purpose:** Server entry point
-- **Functionality:**
-  - Loads environment variables from `.env` file (default PORT=3000)
-  - Creates TcpServer instance
-  - Starts the server on configured port
-  - Logs using SLF4J
+### Server File Count: 64 source + 16 test = 80 Java files
 
 ---
 
-### Configuration
+## CLIENT STRUCTURE
 
-**[Database.java](../Code/Server/src/main/java/com/server/config/Database.java)** (`config/`)
-- **Purpose:** Database connection pooling configuration
-- **Functionality:**
-  - Uses HikariCP connection pool (optimized for cloud deployments)
-  - Pool size: 5 connections max, 1 minimum
-  - Environment variables: `DB_URL`, `DB_USER`, `DB_PASSWORD`
-  - Connection timeout: 10 seconds
-  - Idle timeout: 5 minutes
-  - Max lifetime: 10 minutes
-  - Keepalive: 1 minute ping to prevent stale connections
-  - Singleton pattern for connection access
+### Directory Tree
+```
+Code/Client/
+├── pom.xml
+├── dependency-reduced-pom.xml
+└── src/main/
+    ├── java/com/client/
+    │   ├── Main.java                          # JavaFX Application
+    │   ├── Launcher.java                      # Fat JAR bootstrap
+    │   ├── controller/                        # 2 files
+    │   │   ├── AuthController.java            # Async auth operations
+    │   │   └── ChatController.java            # Async chat operations
+    │   ├── service/                           # 2 files
+    │   │   ├── ChatService.java               # TCP client (Singleton, ~40 methods)
+    │   │   └── LanDiscoveryService.java       # LAN auto-discovery
+    │   ├── view/                              # 8 files
+    │   │   ├── LoginView.java                 # Auth UI (3 screens)
+    │   │   ├── ChatView.java                  # Main 3-panel chat (~2000+ lines)
+    │   │   ├── CreateGroupDialog.java
+    │   │   ├── ManageGroupDialog.java
+    │   │   ├── AvatarModalView.java
+    │   │   ├── ChangePasswordDialog.java
+    │   │   ├── ChangeUsernameDialog.java
+    │   │   └── FriendRequestHistoryDialog.java
+    │   ├── model/                             # 4 files
+    │   │   ├── User.java
+    │   │   ├── Message.java
+    │   │   ├── Conversation.java
+    │   │   └── ApiResponse.java               # record
+    │   ├── emoji/                             # 2 files
+    │   │   ├── EmojiManager.java              # WeChat-style rendering
+    │   │   └── EmojiDef.java
+    │   └── util/                              # 3 files
+    │       ├── TimeUtils.java                 # Vietnamese relative time
+    │       ├── StyleConstants.java            # Centralized theme
+    │       └── ImageUtils.java                # Image encode/decode
+    └── resources/
+        └── emojis/
+            ├── emoji_list.json
+            ├── animated/
+            └── static/
+```
 
----
-
-### TCP Layer (Network Communication)
-
-**[TcpServer.java](../Code/Server/src/main/java/com/server/tcp/TcpServer.java)** (`tcp/`)
-- **Purpose:** Main server socket listener
-- **Functionality:**
-  - Binds to configured port
-  - Accepts incoming TCP connections
-  - Delegates each connection to ClientConnection in thread pool
-  - Thread pool size: 100 concurrent connections
-  - Logging of connection events
-
-**[ClientConnection.java](../Code/Server/src/main/java/com/server/tcp/ClientConnection.java)** (`tcp/`)
-- **Purpose:** Handles individual client connection lifecycle
-- **Key Properties:**
-  - `socket`: TCP socket for communication
-  - `reader`: BufferedReader for receiving JSON
-  - `writer`: PrintWriter for sending JSON responses
-  - `userId`: Authenticated user ID (set after login)
-- **Functionality:**
-  - Runs in dedicated thread (from TcpServer thread pool)
-  - Reads JSON lines from client
-  - Parses JSON and routes to appropriate handler
-  - Maintains `userId` for authenticated operations
-  - Error handling for invalid JSON
-  - Graceful disconnection handling
-  - Methods:
-    - `run()`: Main loop for reading and routing requests
-    - `setUserId(Long)`: Store authenticated user ID
-    - `sendError(String)`: Send error response to client
-    - `sendResponse(JsonObject)`: Send JSON response to client
-
-**[Router.java](../Code/Server/src/main/java/com/server/tcp/Router.java)** (`tcp/`)
-- **Purpose:** Central request routing based on action field
-- **Supported Actions:**
-  - `LOGIN`: LoginHandler → User authentication
-  - `REGISTER`: RegisterHandler → New user registration
-  - `FORGOT_PASSWORD`: ForgotPasswordHandler → Password reset flow
-  - `PROFILE`: ProfileHandler → Get/update user profile
-  - `GET_MESSAGES`: GetMessagesHandler → Retrieve conversation messages
-  - `SEND_MESSAGE`: SendMessageHandler → Send new message
-  - `GET_OR_CREATE_CONVERSATION`: ConversationHandle → Get or create conversation
-  - `GET_USER_CONVERSATIONS`: GetConversationsHandler → List user's conversations
-  - `CHANGE_AVATAR`: AvatarHandler → Update user avatar
-- **Functionality:**
-  - Singleton handler instances for efficiency
-  - Validates `action` field presence
-  - Optional `requestId` field for request tracking
-  - Error responses for unknown actions
-  - Exception handling with internal server error responses
-
-**[TcpConnectionManager.java](../Code/Server/src/main/java/com/server/tcp/TcpConnectionManager.java)** (`tcp/`)
-- **Purpose:** Connection state management (likely for tracking active connections)
+### Client File Count: 23 Java files
 
 ---
 
-### Handlers (Request Processing)
+## DATABASE SCHEMA
 
-Handlers follow a common pattern:
-- `handleTcp(JsonObject request, ClientConnection conn)` method
-- Return `JsonObject` response
-- Execute business logic via Services
-- Error handling and validation
+Key tables (auto-migrated by `Database.runMigrations()`):
 
-#### Authentication Handlers (`handler/auth/`)
-
-**[LoginHandler.java](../Code/Server/src/main/java/com/server/handler/auth/LoginHandler.java)**
-- **Request Fields:** `username`, `password`
-- **Response:**
-  - Success: `status: "success"`, `userId`, `username`
-  - Error: `status: "error"`, `message`
-- **Logic:** Delegates to `AuthService.login()` → password verification via BCrypt
-
-**[RegisterHandler.java](../Code/Server/src/main/java/com/server/handler/auth/RegisterHandler.java)**
-- **Request Fields:** `username`, `password`, `email`
-- **Response:**
-  - Success: `status: "success"`, registration confirmation
-  - Error: `status: "error"`, `message` (duplicate username/email)
-- **Logic:** Delegates to `AuthService.register()` → password hashing via BCrypt
-
-**[ForgotPasswordHandler.java](../Code/Server/src/main/java/com/server/handler/auth/ForgotPasswordHandler.java)**
-- **Request Fields:** `username` (to initiate), `resetCode`, `newPassword` (to confirm)
-- **Response:** Reset code or success/error confirmation
-- **Logic:** 
-  - Generates 6-digit reset code on demand
-  - Validates code and updates password
-  - Delegates to `AuthService`
-
-#### Message Handlers (`handler/message/`)
-
-**[SendMessageHandler.java](../Code/Server/src/main/java/com/server/handler/message/SendMessageHandler.java)**
-- **Request Fields:** `conversationId`, `message` (content), `type` (TEXT/IMAGE/VIDEO/VOICE/FILE)
-- **Response:** Message confirmation with ID
-- **Logic:** Delegates to `MessageService.sendMessage()`
-
-**[GetMessagesHandler.java](../Code/Server/src/main/java/com/server/handler/message/GetMessagesHandler.java)**
-- **Request Fields:** `conversationId`, optional pagination parameters
-- **Response:** Array of Message objects with metadata
-- **Logic:** Delegates to `MessageService.getMessages()`
-
-**[ConversationHandle.java](../Code/Server/src/main/java/com/server/handler/message/ConversationHandle.java)**
-- **Purpose:** Get or create conversation between users
-- **Request Fields:** `userId1`, `userId2` (for private), or group creation parameters
-- **Response:** Conversation object with ID
-- **Logic:** Checks existence or creates new conversation
-
-**[GetConversationsHandler.java](../Code/Server/src/main/java/com/server/handler/message/GetConversationsHandler.java)**
-- **Purpose:** Get all conversations for authenticated user
-- **Request Fields:** `userId`
-- **Response:** Array of Conversation objects
-- **Logic:** Delegates to `ConversationService`
-
-#### Avatar Handler (`handler/changeavatar/`)
-
-**[AvatarHandler.java](../Code/Server/src/main/java/com/server/handler/changeavatar/AvatarHandler.java)**
-- **Request Fields:** `userId`, `avatarUrl`
-- **Response:** Success/error with new avatar URL
-- **Logic:** Delegates to `AvatarService.updateAvatar()`
+| Table | Purpose |
+|---|---|
+| `users` | User accounts: id, username, password_hash, email, is_online, last_seen, created_at |
+| `conversations` | Chat conversations: id, type (PRIVATE/GROUP), name, avatar_url, created_by, last_message_at |
+| `conversation_members` | Membership: conversation_id, user_id, role, joined_at |
+| `messages` | Chat messages: id, conversation_id, sender_id, type, content, created_at, reply_to_message_id, forward_from_id, is_pinned, is_deleted, edited_to_id, pinned_by |
+| `message_status` | Per-recipient status: message_id, user_id, status (SENT/DELIVERED/SEEN), updated_at |
+| `attachments` | File metadata: id, message_id, file_url, file_name, file_size, mime_type |
+| `friendships` | Friend relationships: user1_id, user2_id, status (PENDING/ACCEPTED/BLOCKED), action_user_id, created_at, updated_at |
+| `user_avatars` | Avatar BLOB storage: user_id, avatar_data, updated_at |
+| `conversation_roles` | Custom roles: conversation_id, user_id, role |
+| `calls` | Call history (schema defined, not yet implemented) |
+| `call_participants` | Call participants (schema defined, not yet implemented) |
 
 ---
 
-### Services (Business Logic)
+## MESSAGE FLOW
 
-Services encapsulate business logic and coordinate with repositories.
+```
+Client (ChatService.sendMessage)
+ → TCP Socket: {"action":"SEND_MESSAGE", "conversationId":45, ...}
+ → Server ClientConnection.run() → reader.readLine()
+ → Router.route() → "SEND_MESSAGE" → SendMessageHandler
+ → MessageService.sendMessage() → MessageRepository.save() [transactional]
+ → Response to sender: SEND_MESSAGE_RESPONSE {messageId, ...}
+ → TcpConnectionManager.broadcastToUser(memberId, NEW_MESSAGE)
+ → Recipient Client: ChatService reader → onNewMessage callback → ChatView
+```
 
-**[AuthService.java](../Code/Server/src/main/java/com/server/service/AuthService.java)**
-- **Methods:**
-  - `login(username, password)` → User or null
-    - Retrieves user via UserRepository
-    - Verifies password hash with BCrypt
-  - `register(username, password, email)` → boolean
-    - Hashes password with BCrypt.gensalt()
-    - Creates User object
-    - Saves via UserRepository
-  - `generateResetCode(username)` → 6-digit code string
-    - Generates random 6-digit reset code
-    - Stores in `passwordResetCodes` ConcurrentHashMap
-  - `verifyResetCode(username, code)` → boolean
-  - `resetPassword(username, newPassword)` → boolean
-- **Key Design:** Centralized password security operations
+---
 
-**[MessageService.java](../Code/Server/src/main/java/com/server/service/MessageService.java)**
-- **Methods:** (assumed based on handler usage)
-  - `sendMessage(conversationId, senderId, type, content)` → Message
-  - `getMessages(conversationId, limit, offset)` → List<Message>
-  - `getMessageStatus()` → message delivery status tracking
-- **Responsibility:** Message persistence and retrieval
+## KEY DESIGN PATTERNS
 
-**[ConversationService.java](../Code/Server/src/main/java/com/server/service/ConversationService.java)**
-- **Methods:** (assumed)
-  - `getOrCreateConversation(userId1, userId2)` → Conversation
-  - `getUserConversations(userId)` → List<Conversation>
-  - `createGroupConversation(name, memberIds)` → Conversation
-- **Responsibility:** Conversation management
+| Pattern | Where | Purpose |
+|---|---|---|
+| **Singleton** | `ChatService`, `AuthService`, `TcpConnectionManager`, `PresenceService`, `EmojiManager` | Single instance management |
+| **Strategy/Command** | Handlers (`handleTcp` method) | Each action has its own handler class |
+| **Observer** | `ChatService` callbacks (15+ event consumers) | Push event dispatching |
+| **Repository** | `UserRepository`, `MessageRepository`, etc. | Data access abstraction |
+| **Factory** | `TcpServerSocketFactory` | Plain/TLS socket creation |
+| **MVC** | Client: `view/` → `controller/` → `service/` | Separation of concerns |
+| **Virtual Threads** | `TcpServer` → `Thread.ofVirtual()` | High-concurrency without thread pools |
+| **Future/Promise** | `CompletableFuture<ApiResponse>` in `pendingRequests` | Async request-response |
+| **Connection Pool** | HikariCP in `Database.java` | Database connection reuse |
 
-**[AvatarService.java](../Code/Server/src/main/java/com/server/service/AvatarService.java)**
-- **Methods:**
-  - `updateAvatar(userId, avatarUrl)` → boolean
-- **Responsibility:** User avatar URL management
+---
 
-**[ProfileHandler.java](../Code/Server/src/main/java/com/server/ProfileHandler.java)** (Main package)
+## FILE COUNT SUMMARY
+
+| Category | Count |
+|---|---|
+| **Server Source** (`main`) | 64 Java files |
+| **Server Tests** (`test`) | 16 Java files |
+| **Client Source** (`main`) | 23 Java files |
+| **Total Java Files** | 103 |
+| **Documentation** | 12 Markdown files |
+| **Database** | 11 tables (auto-migrated) |
 - **Purpose:** User profile retrieval and updates
 - **Methods:** `handleTcp(request, connection)`
 - **Responsibility:** Get/update username, status message, online status

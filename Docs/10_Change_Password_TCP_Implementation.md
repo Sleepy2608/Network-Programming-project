@@ -1,139 +1,104 @@
-# Ghi Chú Triển Khai: Đổi Mật Khẩu Qua TCP
+# Change Password TCP Implementation Notes
 
-Tài liệu này ghi lại chi tiết phần vừa triển khai cho chức năng **Đổi mật khẩu** trong profile người dùng. Phần này khác với **Quên mật khẩu** đã có sẵn trước đó.
+This document records the implementation details for the **Change Password** feature in the user profile. This is distinct from the pre-existing **Forgot Password** feature.
 
-## 1. Mục Tiêu Của Chức Năng
+## 1. Feature Purpose
 
-Chức năng này dùng cho người dùng **đã đăng nhập** và muốn đổi mật khẩu trong màn hình profile.
+This feature is for **already authenticated** users who want to change their password from the profile screen.
 
-Luồng đúng là:
-
-```text
-Người dùng đã đăng nhập
- -> mở profile
- -> bấm "Đổi mật khẩu"
- -> nhập mật khẩu hiện tại
- -> nhập mật khẩu mới
- -> nhập lại mật khẩu mới
- -> client gửi action CHANGE_PASSWORD qua TCP
- -> server kiểm tra mật khẩu hiện tại
- -> nếu đúng thì hash mật khẩu mới và cập nhật database
-```
-
-Điểm quan trọng: chức năng này **không dùng lại** luồng `FORGOT_PASSWORD`, vì `FORGOT_PASSWORD` là luồng quên mật khẩu bằng mã xác nhận.
-
-## 2. Phân Biệt Với Quên Mật Khẩu
-
-### Quên mật khẩu
-
-Người dùng không cần đăng nhập. Người dùng nhập username, server tạo mã xác nhận, sau đó người dùng nhập code và mật khẩu mới.
-
-Action TCP đang dùng:
+Flow:
 
 ```text
-FORGOT_PASSWORD
+Logged-in user
+ → opens profile
+ → clicks "Change Password"
+ → enters current password
+ → enters new password
+ → confirms new password
+ → client sends CHANGE_PASSWORD action via TCP
+ → server verifies current password
+ → if correct, hashes new password and updates database
 ```
 
-### Đổi mật khẩu
+Key point: this feature does **NOT** reuse the `FORGOT_PASSWORD` flow, which uses a reset code.
 
-Người dùng phải đang đăng nhập. Người dùng cần nhập mật khẩu hiện tại. Server chỉ đổi mật khẩu nếu mật khẩu hiện tại đúng.
+## 2. Distinction From Forgot Password
 
-Action TCP mới:
+### Forgot Password
+User does not need to be logged in. User enters username, server generates a reset code, then user enters code + new password.
 
-```text
-CHANGE_PASSWORD
-```
+TCP Action: `FORGOT_PASSWORD`
 
-## 3. Luồng TCP Đã Triển Khai
+### Change Password
+User must be logged in. User must enter current password. Server only changes password if current password is correct.
 
-Luồng mới sau khi triển khai:
+TCP Action: `CHANGE_PASSWORD`
+
+## 3. TCP Flow
 
 ```text
 ChatView
- -> ChatTcpClient.changePassword(userId, oldPassword, newPassword)
- -> JSON action CHANGE_PASSWORD
- -> TCP socket
- -> ClientConnection
- -> Router
- -> ChangePasswordHandler
- -> AuthService.changePassword(...)
- -> UserRepository.updatePasswordById(...)
- -> MySQL users.password_hash
+ → ChangePasswordDialog (modal)
+ → ChatController.changePassword(oldPassword, newPassword, onSuccess, onError)
+ → ChatService.changePassword(userId, oldPassword, newPassword)
+ → JSON action CHANGE_PASSWORD
+ → TCP socket
+ → ClientConnection
+ → Router
+ → ChangePasswordHandler
+ → AuthService.changePassword(...)
+ → UserRepository.updatePasswordById(...)
+ → MySQL users.password_hash
 ```
 
-## 4. File Client Đã Sửa
+## 4. Client Files
 
-### 4.1. `ChatView.java`
+### 4.1. `ChangePasswordDialog.java`
 
-File:
+File: `Code/Client/src/main/java/com/client/view/ChangePasswordDialog.java`
 
-```text
-Code/Client/src/main/java/ChatView.java
-```
+A dedicated modal dialog class with:
+- Current password field
+- New password field
+- Confirm password field
+- Cancel button
+- Save button
+- Error/success message label
 
-Đây là file màn hình chat chính, trong đó có panel profile bên phải.
+Client-side validation:
+1. No field can be empty
+2. New password must be at least 6 characters
+3. New password must differ from current password
+4. New password and confirm password must match
+5. Client must be connected to server via TCP
 
-Trước khi sửa, nút này đã tồn tại:
-
+If valid, calls:
 ```java
-Button passBtn = createProfileButton("Đổi mật khẩu", false);
+chatController.changePassword(oldPassword, newPassword, onSuccess, onError)
 ```
 
-Nhưng nút chưa có logic xử lý.
+### 4.2. `ChatController.java`
 
-Sau khi sửa, nút đã được gắn sự kiện:
+File: `Code/Client/src/main/java/com/client/controller/ChatController.java`
 
+Method:
 ```java
-passBtn.setOnAction(e -> showChangePasswordDialog());
+public void changePassword(String oldPassword, String newPassword,
+                           Consumer<String> onSuccess, Consumer<String> onError)
 ```
 
-Mình thêm hàm:
+Runs on background thread via `CompletableFuture`, calls `chatService.changePassword()`. Callbacks dispatch to JavaFX thread via `Platform.runLater()`.
 
-```java
-private void showChangePasswordDialog()
-```
+### 4.3. `ChatService.java`
 
-Hàm này tạo một modal đổi mật khẩu gồm:
+File: `Code/Client/src/main/java/com/client/service/ChatService.java`
 
-- Ô nhập mật khẩu hiện tại.
-- Ô nhập mật khẩu mới.
-- Ô nhập lại mật khẩu mới.
-- Nút hủy.
-- Nút lưu mật khẩu.
-- Dòng thông báo lỗi hoặc thành công.
-
-Các kiểm tra phía client:
-
-1. Không được để trống ô nào.
-2. Mật khẩu mới phải có ít nhất 6 ký tự.
-3. Mật khẩu mới không được trùng mật khẩu hiện tại.
-4. Mật khẩu mới và nhập lại mật khẩu phải khớp.
-5. Client phải đang kết nối TCP với server.
-
-Nếu hợp lệ, UI gọi:
-
-```java
-tcpClient.changePassword(currentUserId, oldPassword, newPassword)
-```
-
-Việc gọi server được chạy bằng `CompletableFuture`, nên UI không bị đứng trong lúc chờ server trả kết quả.
-
-### 4.2. `ChatTcpClient.java`
-
-File:
-
-```text
-Code/Client/src/main/java/ChatTcpClient.java
-```
-
-Mình thêm hàm mới:
-
+Method:
 ```java
 public ApiResponse changePassword(long userId, String oldPassword, String newPassword)
 ```
 
-Hàm này tạo JSON request:
-
+Creates JSON request:
 ```json
 {
   "action": "CHANGE_PASSWORD",
@@ -144,9 +109,7 @@ Hàm này tạo JSON request:
 }
 ```
 
-Sau đó request được gửi qua TCP bằng hàm `sendRequestSync`.
-
-Điểm quan trọng: client không gọi HTTP endpoint, không gọi `/api/change-password`, mà gửi action `CHANGE_PASSWORD` qua socket.
+Sends via `sendRequestSync`. No HTTP endpoint — pure TCP socket.
 
 ## 5. File Server Đã Thêm Và Sửa
 

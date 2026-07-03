@@ -1,44 +1,203 @@
-# 🖥️ SinChat TCP Server Manual
+# 🖥️ Server Setup & Operation Guide
 
-This document provides a comprehensive guide to the architecture, configuration, building, and running of the **SinChat Server** utilizing Java and Stateful TCP Sockets.
+## Overview
+The SinChat Server is a Java 25 TCP socket server using Virtual Threads for high concurrency. It listens on port `3000` for client connections, port `9999` for LAN discovery, and connects to MySQL via HikariCP. Configuration is loaded from `.env`, and schema migrations run automatically on startup.
 
 ---
 
-## 1. Server Architecture Overview
+## Source Files
 
-SinChat Server is a high-performance backend written in **Java 21**, operating as a stateful TCP socket server. All client-server communication goes through a single raw TCP socket connection to optimize throughput.
+| File | Package | Role |
+|---|---|---|
+| `Main.java` | `com.server` | Entry point: loads `.env`, runs migrations, starts `TcpServer` |
+| `Database.java` | `com.server.config` | HikariCP pool setup + auto-migrations |
+| `TcpServer.java` | `com.server.tcp` | ServerSocket lifecycle, Virtual Thread acceptor |
+| `Dockerfile` | `Code/Server/` | Multi-stage Docker build (JDK 25 → JRE 25) |
+| `pom.xml` | `Code/Server/` | Maven config: dependencies, plugins, main class |
+| `.env` | `Code/Server/` | Environment variables |
 
-### Connection & Routing Pipeline
+---
 
+## Startup Flow
+
+```mermaid
+sequenceDiagram
+    participant Main as Main.java
+    participant Dotenv as dotenv-java
+    participant DB as Database.java
+    participant Pool as HikariCP
+    participant MySQL as MySQL
+    participant Tcp as TcpServer.java
+    participant LAN as LanDiscoveryBroadcaster
+    participant Sweeper as IdleConnectionSweeper
+
+    Main->>Dotenv: Dotenv.configure().load()
+    Dotenv-->>Main: PORT, DB_URL, DB_USER, DB_PASSWORD
+    
+    Main->>DB: Database.runMigrations()
+    DB->>Pool: new HikariDataSource(config)
+    Pool->>MySQL: Test connection
+    DB->>MySQL: Migration 0: CREATE/ALTER friendships table
+    DB->>MySQL: Migration 1: ALTER messages ADD reply_to_message_id
+    DB->>MySQL: Migration 2: ALTER messages ADD forward_from_id
+    DB->>MySQL: Migration 3: ALTER friendships ADD action_user_id
+    DB-->>Main: Migrations complete
+    
+    Main->>Tcp: new TcpServer(port)
+    Main->>Tcp: server.start()
+    
+    Tcp->>DB: UserRepository.resetAllOffline()
+    Tcp->>Sweeper: IdleConnectionSweeper.start() [every 5s]
+    Tcp->>LAN: LanDiscoveryBroadcaster.start() [port 9999]
+    
+    loop Accept connections
+        Tcp->>Tcp: ServerSocket.accept()
+        Tcp->>Tcp: Thread.ofVirtual().start(new ClientConnection(socket))
+    end
+    
+    Note over Main: JVM shutdown hook → server.stop()
 ```
-              ┌─────────────────────────────────────────┐
-              │           Clients (JavaFX)              │
-              └────────┬────────────────────────┬───────┘
-                       │ TCP Socket (Port 3000) │
-┌──────────────────────▼────────────────────────▼──────────────────────┐
-│                            TcpServer                                 │
-│  - Listens on the configured ServerSocket port (default: 3000)        │
-│  - Uses Cached ThreadPool to delegate socket client threads          │
-└──────────────────────┬────────────────────────┬──────────────────────┘
-                       │ Assigns Connection     │
-┌──────────────────────▼────────────────────────▼──────────────────────┐
-│                         ClientConnection                             │
-│  - Represents a single connection socket for each Client              │
-│  - Thread loops continuously reading data lines (readLine)           │
-└──────────────────────┬───────────────────────────────────────────────┘
-                       │ parses JSON & routes
-┌──────────────────────▼────────────────────────▼──────────────────────┐
-│                             Router                                   │
-│  - Inspects the "action" field and routes payload to the Handler     │
-│  - Features a robust Throwable catch to prevent connection sags      │
-└──────────────────────┬───────────────────────────────────────────────┘
-                       │ Invokes Business Logic
-┌──────────────────────▼───────────────────────────────────────────────┐
-│                         Handlers & Services                          │
-│  - Performs BCrypt hashing, message persistence, etc.                │
-│  - Integrates HikariCP pool to query MySQL database                  │
-└──────────────────────────────────────────────────────────────────────┘
+
+---
+
+## Key Configuration
+
+### `.env` File
+```env
+PORT=3000
+DB_URL=jdbc:mysql://host:port/database
+DB_USER=username
+DB_PASSWORD=password
+
+# Optional TLS
+TLS_ENABLED=true
+TLS_KEYSTORE_PATH=/path/to/keystore.jks
+TLS_KEYSTORE_PASSWORD=changeit
 ```
+
+### HikariCP Pool Settings (`Database.java`)
+| Setting | Value | Purpose |
+|---|---|---|
+| `maximumPoolSize` | 5 | Optimized for cloud free tier (Render) |
+| `minimumIdle` | 1 | Keep one warm connection |
+| `connectionTimeout` | 30,000 ms | Fail fast if DB unreachable |
+| `idleTimeout` | 600,000 ms (10 min) | Recycle idle connections |
+| `maxLifetime` | 1,800,000 ms (30 min) | Hard limit on connection age |
+| `keepaliveTime` | 60,000 ms (1 min) | `SELECT 1` ping prevents cloud disconnect |
+
+### Auto-Migrations
+Run on every startup, idempotent (`IF NOT EXISTS`):
+```sql
+-- Migration 0
+CREATE TABLE IF NOT EXISTS friendships (...);
+ALTER TABLE friendships ADD COLUMN IF NOT EXISTS action_user_id ...;
+ALTER TABLE friendships ADD COLUMN IF NOT EXISTS created_at ...;
+
+-- Migration 1
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to_message_id ...;
+
+-- Migration 2
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS forward_from_id ...;
+
+-- Migration 3
+ALTER TABLE friendships ADD COLUMN IF NOT EXISTS action_user_id ...;
+```
+
+---
+
+## Running the Server
+
+### Prerequisites
+- **Java JDK 25**+
+- **Maven 3.x** on PATH
+- **MySQL** database accessible
+
+### Quick Start
+```bash
+cd Code/Server
+mvn compile
+mvn exec:java -Dexec.mainClass="com.server.Main"
+```
+Or double-click `run_server.cmd` in the project root.
+
+### Docker
+```bash
+cd Code/Server
+docker build -t sinchat-server .
+docker run -p 3000:3000 -p 9999:9999 --env-file .env sinchat-server
+```
+
+Multi-stage Dockerfile:
+```dockerfile
+FROM eclipse-temurin:25-jdk-jammy AS build   # Maven build
+FROM eclipse-temurin:25-jre-jammy             # Runtime (smaller)
+EXPOSE 3000 9999
+ENTRYPOINT ["java", "-jar", "app.jar"]
+```
+
+### Expected Log Output
+```
+INFO com.server.Main - Starting SinChat Server on port 3000
+INFO com.server.config.Database - Running database migrations...
+INFO com.server.tcp.TcpServer - TCP Server started on port 3000
+INFO com.server.tcp.TcpServer - LAN discovery started on port 9999
+```
+
+---
+
+## Server Lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> Starting: main() called
+    Starting --> Migrating: Load .env
+    Migrating --> Listening: DB migrations OK
+    Listening --> Accepting: ServerSocket.bind(port)
+    Accepting --> Accepting: VirtualThread(ClientConnection) per client
+    Accepting --> Stopping: Shutdown hook / stop()
+    Stopping --> [*]: Close all connections, discovery, sweeper
+```
+
+### Shutdown Hook
+```java
+Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+    server.stop();  // close discovery, sweeper, all ClientConnections, thread pool
+}));
+```
+
+---
+
+## Testing
+
+### Run All Tests
+```bash
+cd Code/Server
+mvn test
+```
+
+### Test Structure (16 test files)
+| Package | Tests |
+|---|---|
+| `handler/` | `ForgotPasswordHandlerTest`, `RegisterHandlerTest` |
+| `service/` | `AuthServiceTest`, `MessageServiceTest`, `ConversationServiceTest` |
+| `model/` | `UserTest`, `MessageTest`, `ConversationTest`, `AttachmentTest`, `MessageStatusTest`, `FriendshipTest`, `ChangeAvatarTest` |
+| `integration/` | `AuthEndpointIntegrationTest`, `EndpointIntegrationTest`, `MessageEndpointIntegrationTest`, `AdditionalEndpointsIntegrationTest` |
+
+---
+
+## Notable Design Decisions
+
+| Decision | Rationale |
+|---|---|
+| Virtual Threads (not ThreadPool) | No pool sizing; scales to thousands of connections |
+| Auto-migrations on startup | No manual SQL scripts; schema always matches code |
+| HikariCP max 5 connections | Cloud free tier has connection limits; 5 is sufficient for chat workloads |
+| `resetAllOffline()` on startup | Clean state after server restart; no stale online users |
+| 30s connection timeout (not 10s) | Cloud DB latency can be higher than local |
+| 30min max lifetime | Below MySQL's default 8-hour `wait_timeout` |
+| JVM shutdown hook | Graceful cleanup on Ctrl+C or kill signal |
+| Multi-stage Docker | Build JDK includes Maven; runtime JRE is smaller |
+| `.env` fallback paths | Checks `./Code/Server/.env` then `./.env` for flexibility |
 
 ---
 
@@ -46,15 +205,18 @@ SinChat Server is a high-performance backend written in **Java 21**, operating a
 
 | Component | Library / Framework | Version | Purpose |
 |---|---|---|---|
-| **Core Runtime** | Java Development Kit (JDK) | 21 (LTS) | Core runtime platform |
-| **Networking** | `java.net.ServerSocket` / `Socket` | JDK built-in | Multi-threaded Raw TCP Socket |
-| **Database Pool** | [HikariCP](https://github.com/brettwooldridge/HikariCP) | 5.1.0 | High-performance DB connection pool |
-| **Database** | MySQL Database | 8.x | Relational persistent database |
-| **Security** | [jBCrypt](https://www.mindrot.org/projects/jBCrypt/) | 0.4 | Secure password hashing |
-| **JSON Parser** | [Gson](https://github.com/google/gson) | 2.10.1 | JSON-to-Java serialization and parsing |
-| **Configuration** | [dotenv-java](https://github.com/cdimascio/dotenv-java) | 3.0.0 | Environment configuration loader (`.env`) |
-| **Logging** | [SLF4J](https://www.slf4j.org/) + slf4j-simple | 2.0.13 | Structured system logs |
-| **Build Tool** | Apache Maven | 3.x | Dependency management & packaging |
+| **Core Runtime** | Java Development Kit (JDK) | 25 | Virtual Threads, core runtime |
+| **Networking** | `java.net.ServerSocket` / `Socket` | JDK built-in | Raw TCP Socket |
+| **Concurrency** | Virtual Threads (`Thread.ofVirtual()`) | JDK 25 | High-concurrency connection handling |
+| **Database Pool** | HikariCP | 5.1.0 | Connection pooling |
+| **Database** | MySQL | 8.x | Persistent storage |
+| **Security** | jBCrypt | 0.4 | Password hashing |
+| **JSON** | Gson | 2.10.1 | Serialization/deserialization |
+| **Configuration** | dotenv-java | 3.0.0 | `.env` file loading |
+| **Logging** | SLF4J + slf4j-simple | 2.0.13 | Structured logging |
+| **Build** | Apache Maven | 3.x | Build & dependency management |
+| **Container** | Docker (multi-stage) | — | Deployment |
+| **Testing** | JUnit Jupiter + Mockito | 5.10.2 / 5.17.0 | Unit & integration tests |
 
 ---
 
@@ -62,107 +224,207 @@ SinChat Server is a high-performance backend written in **Java 21**, operating a
 
 ```
 Code/Server/
-├── pom.xml                             # Maven build configuration & dependencies
-├── .env                                # Local configuration variables
+├── pom.xml
+├── Dockerfile
+├── .env
 ├── src/
 │   ├── main/java/com/server/
-│   │   ├── Main.java                   # Main entry point; starts TcpServer
-│   │   ├── ProfileHandler.java         # Processes profile actions
+│   │   ├── Main.java                          # Entry point
+│   │   ├── ProfileHandler.java                # Profile get/update
 │   │   ├── config/
-│   │   │   └── Database.java           # Sets up HikariCP connection pool
+│   │   │   └── Database.java                  # HikariCP pool + auto-migrations
 │   │   ├── handler/
+│   │   │   ├── TypingHandler.java             # TYPING action
+│   │   │   ├── PingHandler.java               # PING heartbeat
+│   │   │   ├── JoinHandler.java               # JOIN (register connection)
 │   │   │   ├── auth/
-│   │   │   │   ├── LoginHandler.java        # Handles LOGIN action
-│   │   │   │   ├── RegisterHandler.java     # Handles REGISTER action
-│   │   │   │   └── ForgotPasswordHandler.java # Handles FORGOT_PASSWORD action
-│   │   │   ├── message/
-│   │   │   │   ├── SendMessageHandler.java       # Handles SEND_MESSAGE & real-time broadcasts
-│   │   │   │   ├── GetMessagesHandler.java        # Fetches message history
-│   │   │   │   ├── GetConversationsHandler.java   # Fetches conversations list
-│   │   │   │   └── ConversationHandle.java        # Fetches or initializes a private chat
-│   │   │   └── changeavatar/
-│   │   │       └── AvatarHandler.java        # Handles CHANGE_AVATAR action
-│   │   ├── model/
-│   │   │   ├── User.java               # User model entity
-│   │   │   ├── Message.java            # Message model entity
-│   │   │   └── Conversation.java       # Conversation model entity
-│   │   ├── repository/
-│   │   │   ├── UserRepository.java     # DB CRUD for users
-│   │   │   ├── MessageRepository.java  # DB CRUD for messages
-│   │   │   └── ConversationRepository.java # DB CRUD for conversations
-│   │   ├── service/
-│   │   │   ├── AuthService.java        # Hashing and reset token logic
-│   │   │   ├── MessageService.java     # Persistence logic for messages
-│   │   │   ├── ConversationService.java # Private and group conversation logic
-│   │   │   └── AvatarService.java      # Profile avatar updates
-│   │   └── tcp/
-│   │       ├── TcpServer.java          # ServerSocket listener setup
-│   │       ├── ClientConnection.java   # Loops readLine for a client connection
-│   │       ├── Router.java             # Maps action tags to handlers
-│   │       └── TcpConnectionManager.java # Thread-safe online connection cache
+│   │   │   │   ├── LoginHandler.java          # LOGIN with rate limiting
+│   │   │   │   ├── RegisterHandler.java       # REGISTER with validation
+│   │   │   │   ├── ForgotPasswordHandler.java # FORGOT_PASSWORD (2-step)
+│   │   │   │   └── ChangePasswordHandler.java # CHANGE_PASSWORD
+│   │   │   ├── message/                       # 14 message handlers
+│   │   │   │   ├── SendMessageHandler.java    # SEND_MESSAGE + broadcast
+│   │   │   │   ├── GetMessagesHandler.java    # GET_MESSAGES (paginated)
+│   │   │   │   ├── GetConversationsHandler.java # GET_USER_CONVERSATIONS
+│   │   │   │   ├── ConversationHandler.java   # GET_OR_CREATE_CONVERSATION
+│   │   │   │   ├── CreateGroupHandler.java    # CREATE_GROUP
+│   │   │   │   ├── GroupManagementHandler.java # MANAGE_GROUP (6 sub-actions)
+│   │   │   │   ├── LeaveGroupHandler.java     # LEAVE_GROUP
+│   │   │   │   ├── EditMessageHandler.java    # EDIT_MESSAGE
+│   │   │   │   ├── DeleteMessageHandler.java  # DELETE_MESSAGE
+│   │   │   │   ├── SearchMessagesHandler.java # SEARCH_MESSAGES
+│   │   │   │   ├── SearchUserHandler.java     # SEARCH_USERS
+│   │   │   │   ├── PinMessageHandler.java     # PIN_MESSAGE
+│   │   │   │   ├── UnpinMessageHandler.java   # UNPIN_MESSAGE
+│   │   │   │   ├── SetPinPolicyHandler.java   # SET_PIN_POLICY
+│   │   │   │   └── UpdateMessageStatusHandler.java # UPDATE_MESSAGE_STATUS
+│   │   │   ├── friendship/                    # 8 friendship handlers
+│   │   │   │   ├── SendFriendRequestHandler.java
+│   │   │   │   ├── RespondFriendRequestHandler.java
+│   │   │   │   ├── GetFriendsHandler.java
+│   │   │   │   ├── GetFriendRequestsHandler.java
+│   │   │   │   ├── GetFriendshipStatusHandler.java
+│   │   │   │   ├── UnfriendHandler.java
+│   │   │   │   ├── BlockUserHandler.java
+│   │   │   │   └── UnblockUserHandler.java
+│   │   │   ├── changeavatar/
+│   │   │   │   └── AvatarHandler.java        # CHANGE_AVATAR
+│   │   │   ├── avatar/
+│   │   │   │   └── GetAvatarHandler.java      # GET_AVATAR
+│   │   │   └── changeName/
+│   │   │       └── NameHandler.java           # CHANGE_NAME
+│   │   ├── model/                             # 8 model classes
+│   │   │   ├── User.java, Message.java, MessageStatus.java
+│   │   │   ├── MessageSearchResult.java, Friendship.java
+│   │   │   ├── Conversation.java, ChangeAvatar.java, Attachment.java
+│   │   ├── repository/                        # 5 repositories
+│   │   │   ├── UserRepository.java, MessageRepository.java
+│   │   │   ├── MessageStatusRepository.java
+│   │   │   ├── FriendshipRepository.java, ConversationRepository.java
+│   │   ├── service/                           # 6 services
+│   │   │   ├── AuthService.java, MessageService.java
+│   │   │   ├── ConversationService.java, FriendshipService.java
+│   │   │   ├── AvatarService.java, UserNameService.java
+│   │   └── tcp/                               # 9 TCP infrastructure classes
+│   │       ├── TcpServer.java, ClientConnection.java, Router.java
+│   │       ├── TcpConnectionManager.java, PresenceService.java
+│   │       ├── LanDiscoveryBroadcaster.java, IdleConnectionSweeper.java
+│   │       ├── TcpServerSocketFactory.java, Connection.java
 │   └── test/java/com/server/
-│       └── ...                         # Server testing suites
+│       ├── handler/     # Handler unit tests
+│       ├── service/     # Service unit tests
+│       ├── model/       # Model validation tests
+│       └── integration/ # End-to-end TCP integration tests
 ```
 
 ---
 
 ## 4. Session & Connection Management
 
-The server manages online user sockets via the `TcpConnectionManager` class using thread-safe data structures:
+### TcpConnectionManager (Singleton)
+Thread-safe management of online user sockets:
+- `ConcurrentHashMap<Long, Set<ClientConnection>>`: userId → active connections (multi-device)
+- `Set<ClientConnection>`: all active connections snapshot
+- `addConnection(userId, connection)`: Registers connection (triggered by `JOIN`)
+- `removeConnection(connection)`: Unregisters on disconnect
+- `broadcastToUser(userId, message)`: Sends JSON to all connections of a user
+- `hasOnlineConnection(userId)`: Checks if user has any active connection
 
-1.  **Cache Structures**:
-    *   `ConcurrentHashMap<Long, Set<ClientConnection>> userConnections`: Maps a `userId` to a set of active connections (allows login on multiple devices).
-    *   `ConcurrentHashMap<ClientConnection, Long> connectionUsers`: Reverse map used to fetch a user ID quickly when a connection terminates.
-2.  **Key Operations**:
-    *   `addConnection(userId, connection)`: Registers an online socket connection (triggered by `JOIN`).
-    *   `removeConnection(connection)`: Unregisters the socket and frees resources on disconnect.
-    *   `broadcastToUser(userId, message)`: Sends real-time JSON frames directly to the mapped socket connections.
+### PresenceService (Singleton)
+Handles online/offline state and broadcasts:
+- `onUserOnline(userId)`: Sets `is_online=true`, broadcasts `USER_STATUS_EVENT` to friends + conversation peers
+- `onUserOffline(userId)`: Sets `is_online=false`, `last_seen=NOW()`, broadcasts `USER_STATUS_EVENT`
+- `broadcastAvatarChangeToPeers(userId, avatarUrl)`: Sends `USER_AVATAR_CHANGED_EVENT`
+- `broadcastNameChangeToPeers(userId, newUsername)`: Sends `USER_NAME_CHANGED_EVENT`
+
+### IdleConnectionSweeper
+- Runs every 5 seconds
+- Closes `ClientConnection` instances idle longer than `idleTimeoutMillis` (default 60 seconds)
+- Prevents stale connections from consuming resources
+
+### LanDiscoveryBroadcaster
+- Listens on TCP port `9999`
+- Responds `SINCHAT_SERVER:<port>\n` to any connection
+- Enables client auto-discovery on LAN
 
 ---
 
 ## 5. Configuration Guide
 
-The Server reads configuration from a `.env` file placed in the `Code/Server/` directory (or the parent project root).
-
-### Example `.env` File
+### `.env` File (placed in `Code/Server/` or project root)
 ```env
 PORT=3000
-DB_URL=jdbc:mysql://free02.123host.vn/roacqgfa_ltm
-DB_USER=roacqgfa_ltm
-DB_PASSWORD=11111111
+DB_URL=jdbc:mysql://host:port/database
+DB_USER=username
+DB_PASSWORD=password
 ```
 
-### HikariCP DB Pool Tuning (`Database.java`)
-*   **MaximumPoolSize**: 5 (Optimized for Render Free Tier which has tight CPU/Memory constraints).
-*   **ConnectionTimeout**: 10,000 ms (Cancels request if DB connection takes too long to avoid blocking thread pools).
-*   **KeepaliveTime**: 60,000 ms (Periodically tests idle pool connections with `SELECT 1` every 1 minute to prevent database disconnects by cloud hosts).
+### Optional TLS Configuration
+```env
+TLS_ENABLED=true
+TLS_KEYSTORE_PATH=/path/to/keystore.jks
+TLS_KEYSTORE_PASSWORD=changeit
+```
+
+### HikariCP Pool Tuning (`Database.java`)
+| Setting | Value | Purpose |
+|---|---|---|
+| `maximumPoolSize` | 5 | Optimized for cloud free tier |
+| `minimumIdle` | 1 | Keep one connection warm |
+| `connectionTimeout` | 30,000 ms | Fail fast if DB unreachable |
+| `idleTimeout` | 600,000 ms (10 min) | Recycle idle connections |
+| `maxLifetime` | 1,800,000 ms (30 min) | Hard limit on connection age |
+| `keepaliveTime` | 60,000 ms (1 min) | `SELECT 1` ping to prevent cloud disconnect |
+
+### Auto-Migrations (`Database.runMigrations()`)
+The server automatically applies schema migrations on startup:
+- Creates `user_avatars` table for BLOB avatar storage
+- Adds `reply_to_message_id` and `forward_from_id` to `messages`
+- Adds `action_user_id` to `friendships`
+- Ensures `friendships` table and missing columns exist
 
 ---
 
-## 6. Running Locally
+## 6. Running the Server
 
 ### Prerequisites
-*   **Java JDK 21** or later installed.
-*   **Maven** added to the system environment path.
+- **Java JDK 25** or later
+- **Maven** on system PATH
+- **MySQL** database accessible
 
 ### Quick Start
-You can compile and launch the Server instantly by double-clicking:
-📂 **`run_server.cmd`** in the repository root folder.
-
-Alternatively, you can run the commands manually:
+Double-click **`run_server.cmd`** in the repository root, or run manually:
 ```bash
-# 1. Navigate to Server directory
 cd Code/Server
-
-# 2. Compile source code
 mvn compile
-
-# 3. Launch TCP Server
 mvn exec:java -Dexec.mainClass="com.server.Main"
 ```
 
-Once running successfully, the following logs will appear:
+### Docker Deployment
+```bash
+cd Code/Server
+docker build -t sinchat-server .
+docker run -p 3000:3000 --env-file .env sinchat-server
 ```
-[com.server.Main.main()] INFO com.server.Main - Main Server started TCP on port 3000
-[Thread-2] INFO com.server.tcp.TcpServer - TCP Server started on port 3000
+
+The Dockerfile uses multi-stage build: `eclipse-temurin:25-jdk-jammy` for build, `eclipse-temurin:25-jre-jammy` for runtime.
+
+### Expected Log Output
 ```
+[com.server.Main.main()] INFO com.server.Main - Starting SinChat Server on port 3000
+[com.server.Main.main()] INFO com.server.config.Database - Running database migrations...
+[com.server.Main.main()] INFO com.server.tcp.TcpServer - TCP Server started on port 3000
+[com.server.Main.main()] INFO com.server.tcp.TcpServer - LAN discovery started on port 9999
+```
+
+---
+
+## 7. Testing
+
+### Running Tests
+```bash
+cd Code/Server
+mvn test
+```
+
+### Test Structure
+| Package | Contents |
+|---|---|
+| `handler/` | `ForgotPasswordHandlerTest`, `RegisterHandlerTest` |
+| `service/` | `AuthServiceTest`, `MessageServiceTest`, `ConversationServiceTest` |
+| `model/` | `UserTest`, `MessageTest`, `ConversationTest`, `AttachmentTest`, `MessageStatusTest`, `FriendshipTest`, `ChangeAvatarTest` |
+| `integration/` | `AuthEndpointIntegrationTest`, `EndpointIntegrationTest`, `MessageEndpointIntegrationTest`, `AdditionalEndpointsIntegrationTest` |
+
+---
+
+## 8. Security Features
+
+| Feature | Implementation |
+|---|---|
+| Password Hashing | BCrypt (jbcrypt 0.4) |
+| SQL Injection | PreparedStatement in all repositories |
+| Login Rate Limiting | 5 failed attempts → 60s lockout per username (ConcurrentHashMap) |
+| OTP Security | 6-digit SecureRandom, 5-min TTL, 5 attempts max, timing-attack mitigation |
+| Connection Auth | userId on connection must match request userId |
+| Membership Checks | All conversation actions verify user membership |
+| TLS Support | Optional SSL via TcpServerSocketFactory |

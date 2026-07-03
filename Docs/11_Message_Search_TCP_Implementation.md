@@ -1,44 +1,34 @@
-# Ghi Chú Triển Khai: Message Search Qua TCP
+# Message Search TCP Implementation Notes
 
-Tài liệu này ghi lại chi tiết phần triển khai task **SCRUM-24: Message search**.
+This document records the implementation details for the **Message Search** feature (SCRUM-24).
 
-Mục tiêu của task là cho phép người dùng tìm tin nhắn trong cuộc trò chuyện đang mở, theo đúng kiến trúc TCP socket của dự án.
+The feature allows users to search messages within the currently open conversation, using the project's TCP socket architecture.
 
-## 1. Mục Tiêu Chức Năng
+## 1. Feature Purpose
 
-Chức năng tìm kiếm tin nhắn hoạt động trong một conversation cụ thể.
+Message search operates within a specific conversation.
 
-Luồng người dùng:
-
-```text
-Người dùng mở một cuộc trò chuyện
- -> nhập từ khóa vào ô "Tìm tin nhắn..."
- -> bấm nút "Tìm" hoặc nhấn Enter
- -> client gửi action SEARCH_MESSAGES qua TCP
- -> server tìm trong bảng messages
- -> server trả danh sách tin nhắn phù hợp
- -> UI hiển thị kết quả ngay dưới header chat
-```
-
-## 2. Vì Sao Là TCP Action, Không Phải HTTP Endpoint?
-
-Dự án hiện tại dùng TCP socket. Vì vậy message search không gọi endpoint kiểu:
+User flow:
 
 ```text
-/api/messages/search
+User opens a conversation
+ → types keyword into "Search messages..." field
+ → clicks "Search" or presses Enter
+ → client sends SEARCH_MESSAGES action via TCP
+ → server searches in messages table
+ → server returns matching messages
+ → UI displays results below chat header
 ```
 
-Thay vào đó, client gửi JSON action qua `ChatTcpClient`.
+## 2. Why TCP Action, Not HTTP Endpoint?
 
-Action mới là:
+The project uses TCP sockets exclusively. Message search does NOT call an HTTP endpoint like `/api/messages/search`. Instead, the client sends a JSON action via `ChatService`.
 
-```text
-SEARCH_MESSAGES
-```
+Action: `SEARCH_MESSAGES`
 
 ## 3. Request TCP
 
-Client gửi request dạng:
+Client sends:
 
 ```json
 {
@@ -51,20 +41,18 @@ Client gửi request dạng:
 }
 ```
 
-Ý nghĩa:
-
-| Field | Ý nghĩa |
+| Field | Meaning |
 |---|---|
-| `action` | Tên action để Router biết cần gọi handler nào. |
-| `conversationId` | Chỉ tìm trong conversation đang mở. |
-| `keyword` | Từ khóa người dùng nhập. |
-| `limit` | Số kết quả tối đa trả về. |
-| `offset` | Vị trí bắt đầu, để sau này có thể phân trang. |
-| `requestId` | Dùng để ghép response với request ban đầu. |
+| `action` | Action name for Router dispatch |
+| `conversationId` | Search only in the currently open conversation |
+| `keyword` | User-entered keyword |
+| `limit` | Maximum results (server caps at 50) |
+| `offset` | Pagination offset |
+| `requestId` | Correlates response to request |
 
 ## 4. Response TCP
 
-Nếu thành công:
+Success:
 
 ```json
 {
@@ -78,6 +66,7 @@ Nếu thành công:
       "id": 10,
       "conversationId": 1,
       "senderId": 3,
+      "senderUsername": "alice",
       "type": "TEXT",
       "content": "hello",
       "createdAt": "..."
@@ -87,7 +76,7 @@ Nếu thành công:
 }
 ```
 
-Nếu lỗi:
+Error:
 
 ```json
 {
@@ -98,40 +87,41 @@ Nếu lỗi:
 }
 ```
 
-## 5. File Client Đã Sửa
+## 5. Client Files
 
-### 5.1. `ChatTcpClient.java`
+### 5.1. `ChatService.java`
 
-File:
+File: `Code/Client/src/main/java/com/client/service/ChatService.java`
 
-```text
-Code/Client/src/main/java/ChatTcpClient.java
-```
-
-Mình thêm hàm:
-
+Method:
 ```java
 public ApiResponse searchMessages(long conversationId, String keyword, int limit, int offset)
 ```
 
-Hàm này tạo JSON action `SEARCH_MESSAGES` rồi gửi qua TCP bằng `sendRequestSync`.
+Creates JSON action `SEARCH_MESSAGES` and sends via `sendRequestSync`.
 
-### 5.2. `ChatView.java`
+### 5.2. `ChatController.java`
 
-File:
+File: `Code/Client/src/main/java/com/client/controller/ChatController.java`
 
-```text
-Code/Client/src/main/java/ChatView.java
+Method:
+```java
+public void searchMessages(long conversationId, String keyword, int limit, int offset,
+                           Consumer<JsonObject> onSuccess, Consumer<String> onError)
 ```
 
-Mình thêm UI tìm kiếm ở header của khung chat:
+Runs on background thread, dispatches results to JavaFX thread.
 
-- Ô nhập `Tìm tin nhắn...`
-- Nút `Tìm`
-- Panel kết quả nằm dưới header chat
+### 5.3. `ChatView.java`
 
-Các hàm mới:
+File: `Code/Client/src/main/java/com/client/view/ChatView.java`
 
+Added search UI in chat header:
+- "Search messages..." input field
+- "Search" button
+- Results panel below chat header
+
+New methods:
 ```java
 searchMessagesInCurrentConversation()
 renderMessageSearchResults(...)
@@ -140,19 +130,17 @@ showMessageSearchStatus(...)
 clearMessageSearchResults()
 ```
 
-Logic kiểm tra phía client:
+Client-side validation:
+1. Empty keyword → hide results panel
+2. Keyword < 2 chars → show error
+3. No conversation selected → show error
+4. Not connected via TCP → show error
+5. Valid → call `chatController.searchMessages(...)`
 
-1. Nếu keyword rỗng thì ẩn panel kết quả.
-2. Nếu keyword ngắn hơn 2 ký tự thì báo lỗi.
-3. Nếu chưa chọn conversation thì báo lỗi.
-4. Nếu chưa kết nối TCP thì báo lỗi.
-5. Nếu hợp lệ thì gọi `tcpClient.searchMessages(...)`.
-
-Kết quả tìm kiếm được hiển thị thành danh sách nhỏ gồm:
-
-- Người gửi.
-- Thời gian tạo tin nhắn nếu server trả về.
-- Nội dung tin nhắn.
+Search results displayed as a list with:
+- Sender name
+- Creation time
+- Message content
 
 ## 6. File Server Đã Thêm Và Sửa
 
