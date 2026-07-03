@@ -160,6 +160,11 @@ public class ChatView {
     private String activeEditOriginalContent = null;
     private String activeForwardFromContent = null;
 
+    // Friend request state
+    private Label friendRequestBadge;
+    private int pendingRequestCount = 0;
+    private TextField searchField;
+
     // Pagination
     private long currentConversationId = -1;
     private long currentPeerId = -1;
@@ -329,14 +334,22 @@ public class ChatView {
         long senderId = json.get("senderId").getAsLong();
         String senderName = json.has("senderName") ? json.get("senderName").getAsString() : "Ai đó";
         System.out.println("[CHAT_VIEW] Friend request received from " + senderName + " (id=" + senderId + ")");
-        Platform.runLater(this::loadConversations);
+        Platform.runLater(() -> {
+            showToast("📨 " + senderName + " đã gửi lời mời kết bạn");
+            loadConversations();
+            loadPendingRequestCount();
+        });
     }
 
     private void onFriendAccepted(JsonObject json) {
         long acceptorId = json.get("acceptorId").getAsLong();
         String acceptorName = json.has("acceptorName") ? json.get("acceptorName").getAsString() : "Ai đó";
         System.out.println("[CHAT_VIEW] Friend request accepted by " + acceptorName + " (id=" + acceptorId + ")");
-        Platform.runLater(this::loadConversations);
+        Platform.runLater(() -> {
+            showToast("✅ " + acceptorName + " đã chấp nhận lời mời kết bạn");
+            loadConversations();
+            loadPendingRequestCount();
+        });
     }
 
     private void onMessageStatusChanged(JsonObject json) {
@@ -658,6 +671,25 @@ public class ChatView {
         // Mark all messages in this conversation as SEEN for the current user
         // This triggers the server to broadcast MESSAGE_STATUS_EVENT to the sender
         controller.markAllMessagesSeen(conversationId);
+    }
+
+    private void loadPendingRequestCount() {
+        controller.getFriendRequests(
+                json -> {
+                    JsonArray pending = json.has("pending") ? json.getAsJsonArray("pending") : new JsonArray();
+                    int count = pending.size();
+                    pendingRequestCount = count;
+                    Platform.runLater(() -> {
+                        if (count > 0) {
+                            friendRequestBadge.setText(count > 99 ? "99+" : String.valueOf(count));
+                            friendRequestBadge.setVisible(true);
+                        } else {
+                            friendRequestBadge.setVisible(false);
+                        }
+                    });
+                },
+                err -> { /* silently ignore */ }
+        );
     }
 
     private void loadConversations() {
@@ -2646,9 +2678,24 @@ public class ChatView {
             dlg.show();
         });
 
-        headerRow.getChildren().addAll(header, headerSpacer, newGroupBtn);
+        // Friend request badge (inbox icon with pending count)
+        StackPane badgeContainer = new StackPane();
+        Button historyBtn = new Button("📨");
+        historyBtn.setStyle("-fx-background-color: transparent; -fx-font-size: 18px; -fx-cursor: hand; -fx-padding: 4px;");
+        historyBtn.setTooltip(new Tooltip("Lịch sử kết bạn"));
+        historyBtn.setOnAction(e -> new FriendRequestHistoryDialog(stage, controller).show());
 
-        TextField searchField = new TextField();
+        friendRequestBadge = new Label();
+        friendRequestBadge.setStyle("-fx-background-color: #ff3b30; -fx-text-fill: white; -fx-font-size: 10px; "
+                + "-fx-font-weight: bold; -fx-background-radius: 10px; -fx-min-width: 18px; -fx-min-height: 18px; "
+                + "-fx-alignment: center; -fx-padding: 0 4px;");
+        friendRequestBadge.setVisible(false);
+        StackPane.setAlignment(friendRequestBadge, Pos.TOP_RIGHT);
+        badgeContainer.getChildren().addAll(historyBtn, friendRequestBadge);
+
+        headerRow.getChildren().addAll(header, headerSpacer, badgeContainer, newGroupBtn);
+
+        searchField = new TextField();
         searchField.setPromptText("Tìm kiếm...");
         searchField.setStyle("-fx-background-color: " + StyleConstants.BG_BLACK + "; -fx-border-color: " + StyleConstants.INPUT_BORDER
                 + "; -fx-border-width: 1.5px; -fx-border-radius: 20px; -fx-background-radius: 20px; -fx-text-fill: "
