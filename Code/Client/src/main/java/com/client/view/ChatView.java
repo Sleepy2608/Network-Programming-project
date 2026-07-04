@@ -88,6 +88,7 @@ public class ChatView {
     private Label typingLabel;
     private Label loadingIndicator;
     private Button leaveGroupBtn;
+    private Button manageGroupBtn;
     private HBox pinPolicyBox;
     private javafx.scene.control.CheckBox adminOnlyPinCheckBox;
     private HBox pinnedMessagesBar;
@@ -330,6 +331,10 @@ public class ChatView {
                     if (leaveGroupBtn != null) {
                         leaveGroupBtn.setVisible(false);
                         leaveGroupBtn.setManaged(false);
+                    }
+                    if (manageGroupBtn != null) {
+                        manageGroupBtn.setVisible(false);
+                        manageGroupBtn.setManaged(false);
                     }
                     if (pinPolicyBox != null) {
                         pinPolicyBox.setVisible(false);
@@ -634,6 +639,10 @@ public class ChatView {
                 leaveGroupBtn.setVisible(false);
                 leaveGroupBtn.setManaged(false);
             }
+            if (manageGroupBtn != null) {
+                manageGroupBtn.setVisible(false);
+                manageGroupBtn.setManaged(false);
+            }
             if (pinPolicyBox != null) {
                 pinPolicyBox.setVisible(false);
                 pinPolicyBox.setManaged(false);
@@ -649,6 +658,10 @@ public class ChatView {
                 if (!header.getChildren().isEmpty() && header.getChildren().get(0) instanceof Circle headerAvatar) {
                     headerAvatar.setFill(Color.web("#2d2250"));
                 }
+            }
+            if (manageGroupBtn != null && conversationId > 0) {
+                manageGroupBtn.setVisible(true);
+                manageGroupBtn.setManaged(true);
             }
             if (leaveGroupBtn != null && conversationId > 0) {
                 leaveGroupBtn.setVisible(true);
@@ -2981,6 +2994,30 @@ public class ChatView {
         messageSearchButton.setOnAction(e -> searchMessagesInCurrentConversation());
         messageSearchField.setOnAction(e -> searchMessagesInCurrentConversation());
 
+        manageGroupBtn = new Button("⚙️ Quản lý");
+        manageGroupBtn.setStyle("-fx-background-color: rgba(99, 102, 241, 0.15); -fx-text-fill: #818cf8; -fx-border-color: rgba(99, 102, 241, 0.3); -fx-border-width: 1.2px; -fx-border-radius: 18px; -fx-font-weight: bold; -fx-font-size: 13px; -fx-background-radius: 18px; -fx-min-height: 38px; -fx-padding: 0 16px; -fx-cursor: hand;");
+        manageGroupBtn.setOnMouseEntered(e -> manageGroupBtn.setStyle("-fx-background-color: #6366f1; -fx-text-fill: white; -fx-border-color: transparent; -fx-border-width: 1.2px; -fx-border-radius: 18px; -fx-font-weight: bold; -fx-font-size: 13px; -fx-background-radius: 18px; -fx-min-height: 38px; -fx-padding: 0 16px; -fx-cursor: hand;"));
+        manageGroupBtn.setOnMouseExited(e -> manageGroupBtn.setStyle("-fx-background-color: rgba(99, 102, 241, 0.15); -fx-text-fill: #818cf8; -fx-border-color: rgba(99, 102, 241, 0.3); -fx-border-width: 1.2px; -fx-border-radius: 18px; -fx-font-weight: bold; -fx-font-size: 13px; -fx-background-radius: 18px; -fx-min-height: 38px; -fx-padding: 0 16px; -fx-cursor: hand;"));
+        manageGroupBtn.setVisible(false);
+        manageGroupBtn.setManaged(false);
+        manageGroupBtn.setOnAction(evt -> {
+            if (currentConversationId > 0) {
+                new ManageGroupDialog(stage, controller, currentConversationId, () -> {
+                    loadConversations();
+                    // Refresh header info after group changes
+                    String role = conversationUserRoles.get(currentConversationId);
+                    boolean isAdminOrOwner = "ADMIN".equals(role) || "OWNER".equals(role);
+                    manageGroupBtn.setVisible(true);
+                    manageGroupBtn.setManaged(true);
+                    if (adminOnlyPinCheckBox != null) {
+                        adminOnlyPinCheckBox.setDisable(!isAdminOrOwner);
+                        adminOnlyPinCheckBox.setStyle("-fx-text-fill: " + (isAdminOrOwner ? StyleConstants.TEXT_MUTED : "#666666")
+                                + "; -fx-font-size: 12px;");
+                    }
+                }).show();
+            }
+        });
+
         leaveGroupBtn = new Button("Rời nhóm");
         leaveGroupBtn.setStyle("-fx-background-color: rgba(255, 59, 48, 0.15); -fx-text-fill: #ff453a; -fx-border-color: rgba(255, 69, 58, 0.3); -fx-border-width: 1.2px; -fx-border-radius: 18px; -fx-font-weight: bold; -fx-font-size: 13px; -fx-background-radius: 18px; -fx-min-height: 38px; -fx-padding: 0 16px; -fx-cursor: hand;");
         leaveGroupBtn.setOnMouseEntered(e -> leaveGroupBtn.setStyle("-fx-background-color: #ff3b30; -fx-text-fill: white; -fx-border-color: transparent; -fx-border-width: 1.2px; -fx-border-radius: 18px; -fx-font-weight: bold; -fx-font-size: 13px; -fx-background-radius: 18px; -fx-min-height: 38px; -fx-padding: 0 16px; -fx-cursor: hand;"));
@@ -3010,6 +3047,10 @@ public class ChatView {
                         leaveGroupBtn.setVisible(false);
                         leaveGroupBtn.setManaged(false);
                     }
+                    if (manageGroupBtn != null) {
+                        manageGroupBtn.setVisible(false);
+                        manageGroupBtn.setManaged(false);
+                    }
                     loadConversations();
                 }, err -> showToast("Không thể thoát nhóm: " + err));
             }
@@ -3022,6 +3063,7 @@ public class ChatView {
         friendActionBtn.setOnAction(e -> showFriendshipContextMenu(friendActionBtn));
 
         actions.getChildren().addAll(messageSearchField, messageSearchButton,
+                createIconButton("Call"), createIconButton("Video"), friendActionBtn, manageGroupBtn, leaveGroupBtn);
                 friendActionBtn, leaveGroupBtn);
         chatHeader.getChildren().addAll(headerAvatar, headerInfo, spacer, actions);
 
