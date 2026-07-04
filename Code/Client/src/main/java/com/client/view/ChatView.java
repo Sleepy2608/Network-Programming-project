@@ -3063,7 +3063,7 @@ public class ChatView {
         friendActionBtn.setOnAction(e -> showFriendshipContextMenu(friendActionBtn));
 
         actions.getChildren().addAll(messageSearchField, messageSearchButton,
-                createIconButton("Call"), createIconButton("Video"), friendActionBtn, leaveGroupBtn);
+                createIconButton("Call"), createIconButton("Video"), friendActionBtn, manageGroupBtn, leaveGroupBtn);
         chatHeader.getChildren().addAll(headerAvatar, headerInfo, spacer, actions);
 
         // Search results panel
