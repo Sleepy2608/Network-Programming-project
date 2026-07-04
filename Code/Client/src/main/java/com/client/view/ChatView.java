@@ -3064,6 +3064,7 @@ public class ChatView {
 
         actions.getChildren().addAll(messageSearchField, messageSearchButton,
                 createIconButton("Call"), createIconButton("Video"), friendActionBtn, manageGroupBtn, leaveGroupBtn);
+                friendActionBtn, leaveGroupBtn);
         chatHeader.getChildren().addAll(headerAvatar, headerInfo, spacer, actions);
 
         // Search results panel
