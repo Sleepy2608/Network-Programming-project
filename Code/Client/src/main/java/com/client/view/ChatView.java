@@ -697,15 +697,12 @@ public class ChatView {
         controller.markAllMessagesSeen(conversationId);
 
         // Check block state for private conversations
-        Long blockCheckPeerId = peerIdByConversationId.get(conversationId);
-        if (blockCheckPeerId == null && currentPeerId > 0) {
-            blockCheckPeerId = currentPeerId;
-        }
-        if (blockCheckPeerId != null) {
-            checkAndUpdateBlockedState(blockCheckPeerId, name);
-        } 
-        else {
-            // Group conversation — always show input bar
+        // Use the 'peer' variable captured before loadConversations() cleared the map
+        // Only check block for private conversations (peer != null), never for group chats
+        if (peer != null) {
+            checkAndUpdateBlockedState(peer, name);
+        } else {
+            // Group conversation — always show input bar, no block check
             if (inputBar != null) { inputBar.setVisible(true); inputBar.setManaged(true); }
             if (blockedOverlay != null) { blockedOverlay.setVisible(false); blockedOverlay.setManaged(false); }
         }
