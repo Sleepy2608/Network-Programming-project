@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sơ Đồ Quy Trình Quản Trị Nhóm - SinChat</title>
+    <!-- Import Mermaid.js -->
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #f8fafc;
+            --card-bg: #ffffff;
+            --text-color: #1e293b;
+            --primary-color: #4f46e5;
+            --border-color: #e2e8f0;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 40px;
+            max-width: 800px;
+        }
+
+        header h1 {
+            font-size: 2.5rem;
+            color: #0f172a;
+            margin-bottom: 10px;
+            font-weight: 700;
+        }
+
+        header p {
+            color: #64748b;
+            font-size: 1.1rem;
+            line-height: 1.6;
+        }
+
+        .container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(450px, 1fr));
+            gap: 30px;
+            width: 100%;
+            max-width: 1400px;
+        }
+
+        .flowchart-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05), 0 2px 4px -2px rgb(0 0 0 / 0.05);
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .flowchart-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+        }
+
+        /* Group-specific header styling based on original images */
+        .card-header {
+            border-radius: 12px;
+            padding: 12px 16px;
+            margin-bottom: 24px;
+            font-weight: 700;
+            font-size: 1.2rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            text-align: center;
+        }
+
+        /* 1. Tạo nhóm & 2. Rời nhóm & 1. Thêm thành viên & 2. Kick (Purple Theme) */
+        .theme-purple {
+            background-color: #faf5ff;
+            border: 2px solid #d8b4fe;
+            color: #6b21a8;
+        }
+
+        /* 3. Chuyển quyền Admin (Blue Theme) */
+        .theme-blue {
+            background-color: #eff6ff;
+            border: 2px solid #93c5fd;
+            color: #1e3a8a;
+        }
+
+        /* 4. Giải tán nhóm (Red Theme) */
+        .theme-red {
+            background-color: #fef2f2;
+            border: 2px solid #fca5a5;
+            color: #991b1b;
+        }
+
+        .mermaid-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: #ffffff;
+            padding: 20px;
+            border-radius: 12px;
+            overflow-x: auto;
+            border: 1px dashed #cbd5e1;
+            min-height: 350px;
+        }
+
+        .legend {
+            background: #ffffff;
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 16px 24px;
+            margin-bottom: 30px;
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            justify-content: center;
+            box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1);
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.9rem;
+            font-weight: 500;
+        }
+
+        .legend-box {
+            width: 24px;
+            height: 24px;
+            border-radius: 6px;
+            border: 1.5px solid #ccc;
+        }
+
+        .box-client { background-color: #e3f2fd; border-color: #1e88e5; }
+        .box-decision { background-color: #e8f5e9; border-color: #4caf50; border-radius: 50% / 50%; width: 20px; height: 20px; transform: rotate(45deg); }
+        .box-db { background-color: #fff3e0; border-color: #fb8c00; border-radius: 4px 4px 4px 4px; }
+        .box-server { background-color: #e8f5e9; border-color: #4caf50; }
+        .box-error { background-color: #fce8e6; border-color: #ea4335; }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>Sơ Đồ Quy Trình Quản Trị Nhóm</h1>
+        <p>Hệ thống SinChat - Sơ đồ được chuẩn hóa theo mẫu thiết kế nguyên bản và cập nhật logic chuẩn từ mã nguồn thực tế của dự án.</p>
+    </header>
+
+    <div class="legend">
+        <div class="legend-item">
+            <div class="legend-box box-client"></div>
+            <span>Thao tác Client (UI)</span>
+        </div>
+        <div class="legend-item" style="margin-left: 5px; margin-right: 5px;">
+            <div class="legend-box box-decision"></div>
+            <span>Kiểm tra (Decision)</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-box box-db"></div>
+            <span>Cơ sở dữ liệu (Database)</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-box box-server"></div>
+            <span>Server / Phản hồi / Broadcast</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-box box-error"></div>
+            <span>Thông báo lỗi</span>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- 1. TẠO NHÓM -->
+        <div class="flowchart-card">
+            <div class="card-header theme-purple">1. Tạo Nhóm</div>
+            <div class="mermaid-container">
+                <div class="mermaid">
+                graph TD
+                    classDef client fill:#e3f2fd,stroke:#1e88e5,stroke-width:1.5px;
+                    classDef decision fill:#e8f5e9,stroke:#4caf50,stroke-width:1.5px;
+                    classDef db fill:#fff3e0,stroke:#fb8c00,stroke-width:1.5px;
+                    classDef server fill:#e8f5e9,stroke:#4caf50,stroke-width:1.5px;
+                    classDef err fill:#fce8e6,stroke:#ea4335,stroke-width:1.5px;
+
+                    N1[Nhập tên nhóm<br>& Chọn thành viên ban đầu] :::client
+                    N2{Số thành viên<br>gồm cả creator >= 2?} :::decision
+                    N3[Trả về lỗi:<br>Nhóm phải có ít nhất 2 thành viên] :::err
+                    N4[Gửi action: CREATE_GROUP] :::client
+                    N5[(DB: Tạo hội thoại nhóm<br>& Lưu danh sách thành viên)] :::db
+                    N6[Server phản hồi thành công<br>CREATE_GROUP_RESPONSE] :::server
+                    N7[Client render nhóm mới] :::client
+
+                    N1 --> N2
+                    N2 -- Không --> N3
+                    N2 -- Có --> N4
+                    N4 --> N5
+                    N5 --> N6
+                    N6 --> N7
+                </div>
+            </div>
+        </div>
+
+        <!-- 2. RỜI NHÓM -->
+        <div class="flowchart-card">
+            <div class="card-header theme-purple">2. Rời Nhóm</div>
+            <div class="mermaid-container">
+                <div class="mermaid">
+                graph TD
+                    classDef client fill:#e3f2fd,stroke:#1e88e5,stroke-width:1.5px;
+                    classDef decision fill:#e8f5e9,stroke:#4caf50,stroke-width:1.5px;
+                    classDef db fill:#fff3e0,stroke:#fb8c00,stroke-width:1.5px;
+                    classDef server fill:#e8f5e9,stroke:#4caf50,stroke-width:1.5px;
+                    classDef err fill:#fce8e6,stroke:#ea4335,stroke-width:1.5px;
+
+                    R1[Chọn Rời khỏi nhóm] :::client
+                    R2[Gửi action: LEAVE_GROUP] :::client
+                    R3{User đang là<br>OWNER của nhóm?} :::decision
+                    R4[Trả về lỗi:<br>OWNER phải chuyển quyền hoặc giải tán trước] :::err
+                    R5[(DB: Xóa thành viên<br>khỏi nhóm)] :::db
+                    R6[Broadcast sự kiện<br>LEFT_GROUP tới nhóm] :::server
+                    R7[Client xóa nhóm khỏi<br>danh sách chat] :::client
+
+                    R1 --> R2
+                    R2 --> R3
+                    R3 -- Có --> R4
+                    R3 -- Không --> R5
+                    R5 --> R6
+                    R6 --> R7
+                </div>
+            </div>
+        </div>
+
+        <!-- 1. THÊM THÀNH VIÊN -->
+        <div class="flowchart-card">
+            <div class="card-header theme-purple">1. Thêm Thành Viên</div>
+            <div class="mermaid-container">
+                <div class="mermaid">
+                graph TD
+                    classDef client fill:#e3f2fd,stroke:#1e88e5,stroke-width:1.5px;
+                    classDef decision fill:#e8f5e9,stroke:#4caf50,stroke-width:1.5px;
+                    classDef db fill:#fff3e0,stroke:#fb8c00,stroke-width:1.5px;
+                    classDef server fill:#e8f5e9,stroke:#4caf50,stroke-width:1.5px;
+                    classDef err fill:#fce8e6,stroke:#ea4335,stroke-width:1.5px;
+
+                    T1[Chọn danh sách thành viên] :::client
+                    T2[Gửi MANAGE_GROUP<br>subAction: ADD_MEMBER] :::client
+                    T3{Thành viên<br>đã tồn tại?} :::decision
+                    T4[Trả về lỗi:<br>Thành viên đã tồn tại trong nhóm] :::err
+                    T5[(DB: Thêm thành viên<br>vào nhóm)] :::db
+                    T6[Broadcast sự kiện<br>MEMBER_ADDED tới nhóm] :::server
+                    T7[Client nhận thông báo kết quả<br>thành công / lỗi] :::client
+
+                    T1 --> T2
+                    T2 --> T3
+                    T3 -- Có --> T4
+                    T3 -- Không --> T5
+                    T5 --> T6
+                    T6 --> T7
+                    T4 --> T7
+                </div>
+            </div>
+        </div>
+
+        <!-- 2. TRỤC XUẤT THÀNH VIÊN (KICK) -->
+        <div class="flowchart-card">
+            <div class="card-header theme-purple">2. Trục Xuất Thành Viên (Kick)</div>
+            <div class="mermaid-container">
+                <div class="mermaid">
+                graph TD
+                    classDef client fill:#e3f2fd,stroke:#1e88e5,stroke-width:1.5px;
+                    classDef decision fill:#e8f5e9,stroke:#4caf50,stroke-width:1.5px;
+                    classDef db fill:#fff3e0,stroke:#fb8c00,stroke-width:1.5px;
+                    classDef server fill:#e8f5e9,stroke:#4caf50,stroke-width:1.5px;
+                    classDef err fill:#fce8e6,stroke:#ea4335,stroke-width:1.5px;
+
+                    K1[Chọn thành viên cần kick] :::client
+                    K2[Gửi MANAGE_GROUP<br>subAction: KICK_MEMBER] :::client
+                    K3{Người yêu cầu<br>là OWNER?} :::decision
+                    K4[Trả về lỗi:<br>Chỉ OWNER mới được kick] :::err
+                    K5{Kick chính mình?} :::decision
+                    K6[Trả về lỗi:<br>Không được tự kick chính mình] :::err
+                    K7[(DB: Xóa thành viên tương ứng<br>khỏi nhóm)] :::db
+                    K8[Broadcast sự kiện<br>MEMBER_KICKED tới nhóm] :::server
+                    K9[Client nhận thông báo kết quả<br>thành công / lỗi] :::client
+
+                    K1 --> K2
+                    K2 --> K3
+                    K3 -- Không --> K4
+                    K3 -- Có --> K5
+                    K5 -- Có --> K6
+                    K5 -- Không --> K7
+                    K7 --> K8
+                    K8 --> K9
+                    K4 --> K9
+                    K6 --> K9
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. CHUYỂN QUYỀN ADMIN -->
+        <div class="flowchart-card">
+            <div class="card-header theme-blue">3. Chuyển Quyền Admin</div>
+            <div class="mermaid-container">
+                <div class="mermaid">
+                graph TD
+                    classDef client fill:#e3f2fd,stroke:#1e88e5,stroke-width:1.5px;
+                    classDef decision fill:#e8f5e9,stroke:#4caf50,stroke-width:1.5px;
+                    classDef db fill:#fff3e0,stroke:#fb8c00,stroke-width:1.5px;
+                    classDef server fill:#e8f5e9,stroke:#4caf50,stroke-width:1.5px;
+                    classDef err fill:#fce8e6,stroke:#ea4335,stroke-width:1.5px;
+
+                    C1[Chọn Admin/OWNER mới] :::client
+                    C2[Gửi MANAGE_GROUP<br>subAction: TRANSFER_ADMIN] :::client
+                    C3{Người yêu cầu<br>là OWNER?} :::decision
+                    C4[Trả về lỗi:<br>Chỉ OWNER mới được chuyển quyền] :::err
+                    C5[(DB: Cập nhật quyền OWNER mới<br>& Cập nhật role trong nhóm)] :::db
+                    C6[Broadcast sự kiện<br>ADMIN_TRANSFERRED tới nhóm] :::server
+                    C7[Client cập nhật vai trò mới<br>& Thay đổi UI tương ứng] :::client
+
+                    C1 --> C2
+                    C2 --> C3
+                    C3 -- Không --> C4
+                    C3 -- Có --> C5
+                    C5 --> C6
+                    C6 --> C7
+                    C4 --> C7
+                </div>
+            </div>
+        </div>
+
+        <!-- 4. GIẢI TÁN NHÓM -->
+        <div class="flowchart-card">
+            <div class="card-header theme-red">4. Giải Tán Nhóm</div>
+            <div class="mermaid-container">
+                <div class="mermaid">
+                graph TD
+                    classDef client fill:#e3f2fd,stroke:#1e88e5,stroke-width:1.5px;
+                    classDef decision fill:#e8f5e9,stroke:#4caf50,stroke-width:1.5px;
+                    classDef db fill:#fff3e0,stroke:#fb8c00,stroke-width:1.5px;
+                    classDef server fill:#e8f5e9,stroke:#4caf50,stroke-width:1.5px;
+                    classDef err fill:#fce8e6,stroke:#ea4335,stroke-width:1.5px;
+
+                    G1[Chọn Giải tán nhóm] :::client
+                    G2[Gửi MANAGE_GROUP<br>subAction: DISBAND] :::client
+                    G3{Người yêu cầu<br>là OWNER?} :::decision
+                    G4[Trả về lỗi:<br>Chỉ OWNER mới được giải tán] :::err
+                    G5[(DB: Xóa nhóm & Xóa tất cả<br>thành viên khỏi nhóm)] :::db
+                    G6[Broadcast sự kiện<br>GROUP_DISBANDED tới nhóm] :::server
+                    G7[Client xóa nhóm khỏi danh sách chat<br>& thông báo cho người dùng] :::client
+
+                    G1 --> G2
+                    G2 --> G3
+                    G3 -- Không --> G4
+                    G3 -- Có --> G5
+                    G5 --> G6
+                    G6 --> G7
+                    G4 --> G7
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Khởi tạo Mermaid
+        mermaid.initialize({
+            startOnLoad: true,
+            theme: 'default',
+            securityLevel: 'loose',
+            flowchart: {
+                useMaxWidth: true,
+                htmlLabels: true
+            }
+        });
+    </script>
+</body>
+</html>
