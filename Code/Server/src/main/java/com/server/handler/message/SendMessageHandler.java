@@ -16,6 +16,7 @@ public class SendMessageHandler {
     private final com.server.repository.ConversationRepository conversationRepository = new com.server.repository.ConversationRepository();
     private final com.server.repository.MessageStatusRepository messageStatusRepository = new com.server.repository.MessageStatusRepository();
     private final com.server.repository.UserRepository userRepository = new com.server.repository.UserRepository();
+    private final com.server.service.FriendshipService friendshipService = new com.server.service.FriendshipService();
 
     public JsonObject handleTcp(JsonObject request, ClientConnection conn) {
         JsonObject response = new JsonObject();
@@ -70,6 +71,22 @@ public class SendMessageHandler {
                 response.addProperty("status", "error");
                 response.addProperty("message", "Unauthorized: not a member of this conversation");
                 return response;
+            }
+
+            // Block check: if PRIVATE conversation and either user blocked the other, reject
+            String convType = conversationRepository.getConversationType(conversationId);
+            if ("PRIVATE".equals(convType) && memberIds.size() == 2) {
+                long peerId = memberIds.get(0) == senderId ? memberIds.get(1) : memberIds.get(0);
+                if (friendshipService.isBlockedBetween(senderId, peerId)) {
+                    String peerUsername = "người dùng này";
+                    com.server.model.User peerUser = userRepository.findById(peerId);
+                    if (peerUser != null) peerUsername = peerUser.getUsername();
+                    logger.info("[SEND_MESSAGE BLOCKED] Remote={} | UserId={} | ConversationId={} | PeerId={} | Blocked",
+                            conn.getRemoteAddress(), senderId, conversationId, peerId);
+                    response.addProperty("status", "blocked");
+                    response.addProperty("message", "Không thể nhắn tin được với " + peerUsername);
+                    return response;
+                }
             }
 
             // Check forwardFromId first, so we can allow empty content for forward-only messages
