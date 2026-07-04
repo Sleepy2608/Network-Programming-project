@@ -698,9 +698,13 @@ public class ChatView {
 
         // Check block state for private conversations
         Long blockCheckPeerId = peerIdByConversationId.get(conversationId);
+        if (blockCheckPeerId == null && currentPeerId > 0) {
+            blockCheckPeerId = currentPeerId;
+        }
         if (blockCheckPeerId != null) {
             checkAndUpdateBlockedState(blockCheckPeerId, name);
-        } else {
+        } 
+        else {
             // Group conversation — always show input bar
             if (inputBar != null) { inputBar.setVisible(true); inputBar.setManaged(true); }
             if (blockedOverlay != null) { blockedOverlay.setVisible(false); blockedOverlay.setManaged(false); }
